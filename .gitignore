@@ -22,3 +22,5 @@ go.work
 
 caddy
 Caddyfile
+
+public

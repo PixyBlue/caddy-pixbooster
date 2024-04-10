@@ -2,15 +2,20 @@ package pixbooster
 
 import (
 	"bytes"
+	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/chai2010/webp"
 	"go.uber.org/zap"
 	"golang.org/x/net/html"
 )
@@ -20,9 +25,18 @@ func init() {
 	httpcaddyfile.RegisterHandlerDirective("pixbooster", parseCaddyfile)
 }
 
+type ImgFormat struct {
+	Extension string
+	MimeType  string
+}
+
 type Pixbooster struct {
-	logger  *zap.Logger
-	siteURL string
+	logger      *zap.Logger
+	siteURL     string
+	imgSuffix   string
+	destFormats []ImgFormat
+	srcMimes    []string
+	nowebp      bool
 }
 
 func (Pixbooster) CaddyModule() caddy.ModuleInfo {
@@ -34,33 +48,90 @@ func (Pixbooster) CaddyModule() caddy.ModuleInfo {
 
 func (p *Pixbooster) Provision(ctx caddy.Context) error {
 	p.logger = ctx.Logger(p)
+	p.imgSuffix = "pixbooster"
+	p.destFormats = append(p.destFormats, ImgFormat{Extension: ".webp", MimeType: "image/webp"})
+	p.srcMimes = append(p.srcMimes, "image/jpeg")
+
 	return nil
 }
 
 func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	rec := httptest.NewRecorder()
-	next.ServeHTTP(rec, r)
+	if p.isOptimizedUrl(r.URL.Path) {
+		format := ImgFormat{}
+		for _, f := range p.destFormats {
+			if strings.HasSuffix(r.URL.Path, f.Extension) {
+				format = f
+				break
+			}
+		}
+		if format.Extension == "" {
+			http.Error(w, "Unsupported image format", http.StatusBadRequest)
+			p.logger.Error("Unsupported image format: " + r.URL.Path)
+			return fmt.Errorf("Unsupported image format: " + r.URL.Path)
+		}
 
-	body, err := io.ReadAll(rec.Body)
-	if err != nil {
+		var proto string
+		if r.TLS == nil {
+			proto = "http://"
+		} else {
+			proto = "https://"
+		}
+		originalImageUrl := p.getOriginalImageURL(proto + r.Host + r.RequestURI)
+		imgStream, err := p.convertImageToFormat(originalImageUrl, format)
+		if err != nil {
+			p.logger.Error("Error converting image to format: " + format.Extension)
+			p.logger.Sugar().Error(err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return nil
+		}
+
+		w.Header().Set("Content-Type", format.MimeType)
+
+		if _, err := io.Copy(w, imgStream); err != nil {
+			p.logger.Error("Error sending image data: " + err.Error())
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return nil
+		}
+	}
+
+	if next != nil {
+		rec := httptest.NewRecorder()
+		err := next.ServeHTTP(rec, r)
+		if err != nil {
+			return err
+		}
+
+		contentType := rec.Header().Get("Content-Type")
+		if strings.HasPrefix(contentType, "text/html") {
+			body := rec.Body.Bytes()
+			doc, err := html.Parse(bytes.NewReader(body))
+			if err != nil {
+				return err
+			}
+
+			p.siteURL = r.Proto + "://" + r.Host
+			images := p.collectImagesToReplace(doc, []*html.Node{})
+			for _, img := range images {
+				p.replaceImgWithPicture(img)
+			}
+			p.addSources(doc)
+
+			w.Header().Set("Content-Type", "text/html")
+			if err := html.Render(w, doc); err != nil {
+				return err
+			}
+			return nil
+		}
+
+		for k, v := range rec.Header() {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(rec.Code)
+		_, err = io.Copy(w, rec.Body)
 		return err
 	}
 
-	doc, err := html.Parse(bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-
-	p.siteURL = r.Proto + "://" + r.Host
-
-	images := p.collectImagesToReplace(doc, []*html.Node{})
-	for _, img := range images {
-		p.replaceImgWithPicture(img)
-	}
-	p.addWebPSources(doc)
-
-	html.Render(w, doc)
-
+	http.Error(w, "Not Found", http.StatusNotFound)
 	return nil
 }
 
@@ -95,13 +166,13 @@ func (p *Pixbooster) isImageInsidePicture(img *html.Node) bool {
 	return false
 }
 
-func (p *Pixbooster) addWebPSources(n *html.Node) {
+func (p *Pixbooster) addSources(n *html.Node) {
 	if n.Type == html.ElementNode && n.Data == "picture" {
-		p.addWebPSourcesToPicture(n)
+		p.addSourcesToPicture(n)
 	}
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		p.addWebPSources(c)
+		p.addSources(c)
 	}
 }
 
@@ -125,11 +196,12 @@ func (p *Pixbooster) replaceImgWithPicture(n *html.Node) {
 		}
 	}
 
+	// @TODO: support other formats
 	source := &html.Node{
 		Type: html.ElementNode,
 		Data: "source",
 		Attr: []html.Attribute{
-			{Key: "srcset", Val: p.getSrc(n) + ".pixbooster.webp"},
+			{Key: "srcset", Val: p.getSrc(n) + "." + p.imgSuffix + ".webp"},
 			{Key: "type", Val: "image/webp"},
 		},
 	}
@@ -146,7 +218,7 @@ func (p *Pixbooster) replaceImgWithPicture(n *html.Node) {
 	n.Parent.RemoveChild(n)
 }
 
-func (p *Pixbooster) addWebPSourcesToPicture(picture *html.Node) {
+func (p *Pixbooster) addSourcesToPicture(picture *html.Node) {
 	var jpegSources []*html.Node
 
 	for c := picture.FirstChild; c != nil; c = c.NextSibling {
@@ -158,41 +230,141 @@ func (p *Pixbooster) addWebPSourcesToPicture(picture *html.Node) {
 	}
 
 	for _, source := range jpegSources {
-		newSource := &html.Node{
-			Type: html.ElementNode,
-			Data: "source",
-			Attr: make([]html.Attribute, 0, len(source.Attr)),
-		}
-
-		for _, attr := range source.Attr {
-			if attr.Key != "srcset" && attr.Key != "type" {
-				newSource.Attr = append(newSource.Attr, attr)
+		for _, format := range p.destFormats {
+			newSource := &html.Node{
+				Type: html.ElementNode,
+				Data: "source",
+				Attr: make([]html.Attribute, 0, len(source.Attr)),
 			}
+
+			for _, attr := range source.Attr {
+				if attr.Key != "srcset" && attr.Key != "type" {
+					newSource.Attr = append(newSource.Attr, attr)
+				}
+			}
+
+			newSource.Attr = append(newSource.Attr, html.Attribute{
+				Key: "srcset",
+				Val: p.getOptimizedImageURL(p.getSrc(source), format),
+			})
+
+			newSource.Attr = append(newSource.Attr, html.Attribute{
+				Key: "type",
+				Val: format.MimeType,
+			})
+
+			picture.InsertBefore(newSource, source)
+			newSource.Parent = picture
 		}
-
-		filename := source.Attr[0].Val
-		ext := ".webp"
-
-		newSource.Attr = append(newSource.Attr, html.Attribute{
-			Key: "srcset",
-			Val: filename + ext,
-		})
-
-		newSource.Attr = append(newSource.Attr, html.Attribute{
-			Key: "type",
-			Val: "image/webp",
-		})
-
-		picture.InsertBefore(newSource, source)
-		newSource.Parent = picture
 	}
 }
 
-func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	d.Next()
-	return nil
+func (p *Pixbooster) getOptimizedImageURL(originalURL string, format ImgFormat) string {
+	parsedURL, err := url.Parse(originalURL)
+	if err != nil {
+		p.logger.Sugar().Fatalf("Error parsing URL: %v", err)
+	}
+
+	newPath := parsedURL.Path + "." + p.imgSuffix + format.Extension
+
+	parsedURL.Path = newPath
+
+	return parsedURL.String()
 }
 
+func (p *Pixbooster) getOriginalImageURL(optimizedURL string) string {
+
+	pathParts := strings.Split(optimizedURL, ".")
+	pixboosterIndex := -1
+
+	for i, part := range pathParts {
+		if part == p.imgSuffix {
+			pixboosterIndex = i
+			break
+		}
+	}
+
+	if pixboosterIndex == -1 {
+		p.logger.Sugar().Fatalf("Error finding %s suffix in URL: %s", p.imgSuffix, optimizedURL)
+	}
+
+	return strings.Join(pathParts[:pixboosterIndex], ".")
+}
+
+func (p *Pixbooster) isOptimizedUrl(myurl string) bool {
+	parsedURL, err := url.Parse(myurl)
+	if err != nil {
+		p.logger.Sugar().Errorf("Error parsing URL: %v", err)
+		return false
+	}
+
+	pathParts := strings.Split(parsedURL.Path, ".")
+	pixboosterIndex := -1
+
+	for i, part := range pathParts {
+		if part == p.imgSuffix {
+			pixboosterIndex = i
+			break
+		}
+	}
+
+	return pixboosterIndex != -1
+}
+
+func (p *Pixbooster) convertImageToFormat(imgURL string, format ImgFormat) (io.Reader, error) {
+	resp, err := http.Get(imgURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	contentType := resp.Header.Get("Content-Type")
+
+	var img image.Image
+	var decodeErr error
+
+	switch contentType {
+	case "image/jpeg":
+		img, decodeErr = jpeg.Decode(resp.Body)
+	default:
+		return nil, fmt.Errorf("unsupported input image format: %s", format.Extension)
+	}
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
+
+	buf := new(bytes.Buffer)
+
+	switch format.Extension {
+	case ".webp":
+		err = webp.Encode(buf, img, &webp.Options{Lossless: true})
+	default:
+		return nil, fmt.Errorf("unsupported output image format: %s", format.Extension)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return buf, nil
+}
+
+func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	for d.Next() {
+		if d.NextArg() {
+			return d.ArgErr()
+		}
+		for d.NextBlock(0) {
+			switch d.Val() {
+			case "nowebp":
+				p.nowebp = true
+			default:
+				return d.Errf("unrecognized subdirective: %s", d.Val())
+			}
+		}
+	}
+	return nil
+}
 func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
 	var p Pixbooster
 	err := p.UnmarshalCaddyfile(h.Dispenser)
