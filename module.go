@@ -20,6 +20,7 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/chai2010/webp"
 	"github.com/gen2brain/avif"
+	"github.com/gen2brain/jpegxl"
 	"go.uber.org/zap"
 	"golang.org/x/net/html"
 )
@@ -53,6 +54,7 @@ func (Pixbooster) CaddyModule() caddy.ModuleInfo {
 func (p *Pixbooster) Provision(ctx caddy.Context) error {
 	p.logger = ctx.Logger(p)
 	p.imgSuffix = "pixbooster"
+	p.destFormats = append(p.destFormats, ImgFormat{Extension: ".jxl", MimeType: "image/jxl"})
 	p.destFormats = append(p.destFormats, ImgFormat{Extension: ".avif", MimeType: "image/avif"})
 	p.destFormats = append(p.destFormats, ImgFormat{Extension: ".webp", MimeType: "image/webp"})
 	p.srcMimes = append(p.srcMimes, "image/jpeg")
@@ -112,9 +114,9 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			}
 
 			pictures := p.collectPictures(doc, []*html.Node{})
-			images := p.collectImg(doc, []*html.Node{})
+			imgs := p.collectImg(doc, []*html.Node{})
 
-			for _, img := range images {
+			for _, img := range imgs {
 				p.wrapImgWithPicture(img)
 			}
 
@@ -181,6 +183,7 @@ func (p *Pixbooster) collectImg(n *html.Node, images []*html.Node) []*html.Node 
 			}
 		}
 	}
+
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		images = p.collectImg(c, images)
 	}
@@ -206,13 +209,17 @@ func (p *Pixbooster) isImageInsidePicture(img *html.Node) bool {
 	return false
 }
 
-func (p *Pixbooster) getSrc(n *html.Node) string {
+func (p *Pixbooster) getAttr(n *html.Node, attribute string) string {
 	for _, attr := range n.Attr {
-		if attr.Key == "src" {
+		if attr.Key == attribute {
 			return attr.Val
 		}
 	}
 	return ""
+}
+
+func (p *Pixbooster) getSrc(n *html.Node) string {
+	return p.getAttr(n, "src")
 }
 
 func (p *Pixbooster) wrapImgWithPicture(n *html.Node) {
@@ -240,19 +247,30 @@ func (p *Pixbooster) wrapImgWithPicture(n *html.Node) {
 
 func (p *Pixbooster) addSourcesToPicture(picture *html.Node, copyAttr bool) {
 	var imgSources []*html.Node
+	var existingSource *html.Node
 	for c := picture.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type == html.ElementNode && (c.Data == "source" || c.Data == "img") {
-			src := p.getSrc(c)
+		if c.Type == html.ElementNode && (c.Data == "source" || (c.Data == "img" && !p.isImageInsidePicture(c))) {
+			var src string
+			if c.Data == "img" {
+				src = p.getSrc(c)
+			} else {
+				src = p.getAttr(c, "srcset")
+			}
+
 			ext := filepath.Ext(src)
 			mimeType := mime.TypeByExtension(ext)
 			for _, allowedMimeType := range p.srcMimes {
 				if mimeType == allowedMimeType {
+					if c.Data == "source" && existingSource == nil {
+						existingSource = c
+					}
 					imgSources = append(imgSources, c)
 					break
 				}
 			}
 		}
 	}
+
 	for _, source := range imgSources {
 		for _, format := range p.destFormats {
 			newSource := &html.Node{
@@ -269,9 +287,16 @@ func (p *Pixbooster) addSourcesToPicture(picture *html.Node, copyAttr bool) {
 				}
 			}
 
+			var src string
+			if source.Data == "img" {
+				src = p.getSrc(source)
+			} else {
+				src = p.getAttr(source, "srcset")
+			}
+
 			newSource.Attr = append(newSource.Attr, html.Attribute{
 				Key: "srcset",
-				Val: p.getOptimizedImageURL(p.getSrc(source), format),
+				Val: p.getOptimizedImageURL(src, format),
 			})
 
 			newSource.Attr = append(newSource.Attr, html.Attribute{
@@ -279,7 +304,11 @@ func (p *Pixbooster) addSourcesToPicture(picture *html.Node, copyAttr bool) {
 				Val: format.MimeType,
 			})
 
-			picture.InsertBefore(newSource, source)
+			if existingSource != nil {
+				picture.InsertBefore(newSource, existingSource)
+			} else {
+				picture.AppendChild(newSource)
+			}
 			newSource.Parent = picture
 		}
 	}
@@ -368,6 +397,8 @@ func (p *Pixbooster) convertImageToFormat(imgURL string, format ImgFormat) (io.R
 		err = webp.Encode(buf, img, &webp.Options{Lossless: true})
 	case ".avif":
 		err = avif.Encode(buf, img)
+	case ".jxl":
+		err = jpegxl.Encode(buf, img)
 	default:
 		return nil, fmt.Errorf("unsupported output image format: %s", format.Extension)
 	}
