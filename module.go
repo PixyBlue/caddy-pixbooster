@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"image/png"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/caddyserver/caddy/v2"
@@ -32,7 +35,7 @@ type ImgFormat struct {
 
 type Pixbooster struct {
 	logger      *zap.Logger
-	siteURL     string
+	rootURL     string
 	imgSuffix   string
 	destFormats []ImgFormat
 	srcMimes    []string
@@ -51,11 +54,14 @@ func (p *Pixbooster) Provision(ctx caddy.Context) error {
 	p.imgSuffix = "pixbooster"
 	p.destFormats = append(p.destFormats, ImgFormat{Extension: ".webp", MimeType: "image/webp"})
 	p.srcMimes = append(p.srcMimes, "image/jpeg")
+	p.srcMimes = append(p.srcMimes, "image/png")
 
 	return nil
 }
 
 func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	p.logger.Debug("Pixbooster middleware start")
+	p.rootURL = p.getRootUrl(r)
 	if p.isOptimizedUrl(r.URL.Path) {
 		format := ImgFormat{}
 		for _, f := range p.destFormats {
@@ -70,13 +76,7 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			return fmt.Errorf("Unsupported image format: " + r.URL.Path)
 		}
 
-		var proto string
-		if r.TLS == nil {
-			proto = "http://"
-		} else {
-			proto = "https://"
-		}
-		originalImageUrl := p.getOriginalImageURL(proto + r.Host + r.RequestURI)
+		originalImageUrl := p.getOriginalImageURL(p.rootURL + r.RequestURI)
 		imgStream, err := p.convertImageToFormat(originalImageUrl, format)
 		if err != nil {
 			p.logger.Error("Error converting image to format: " + format.Extension)
@@ -103,14 +103,15 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 
 		contentType := rec.Header().Get("Content-Type")
 		if strings.HasPrefix(contentType, "text/html") {
+
 			body := rec.Body.Bytes()
 			doc, err := html.Parse(bytes.NewReader(body))
 			if err != nil {
 				return err
 			}
 
-			p.siteURL = r.Proto + "://" + r.Host
 			images := p.collectImagesToReplace(doc, []*html.Node{})
+
 			for _, img := range images {
 				p.replaceImgWithPicture(img)
 			}
@@ -135,21 +136,47 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	return nil
 }
 
+func (p *Pixbooster) getRootUrl(r *http.Request) string {
+	var proto string
+	if r.TLS == nil {
+		proto = "http://"
+	} else {
+		proto = "https://"
+	}
+	var port string
+	if r.URL.Port() != "" {
+		port = ":" + r.URL.Port()
+	}
+	return proto + r.Host + port
+}
+
 func (p *Pixbooster) isSameSite(imageURL string) bool {
-	originalHost, err := url.Parse(p.siteURL)
+	if !strings.HasPrefix(imageURL, "http://") && !strings.HasPrefix(imageURL, "https://") {
+		return true
+	}
+
+	imageURLParsed, err := url.Parse(imageURL)
 	if err != nil {
+		p.logger.Sugar().Debug(err)
 		return false
 	}
-	imageHost, err := url.Parse(imageURL)
-	if err != nil {
-		return false
-	}
-	return originalHost.Host == imageHost.Host
+
+	return imageURLParsed.Host == p.rootURL
 }
 
 func (p *Pixbooster) collectImagesToReplace(n *html.Node, images []*html.Node) []*html.Node {
 	if n.Type == html.ElementNode && n.Data == "img" && p.isSameSite(p.getSrc(n)) && !p.isImageInsidePicture(n) {
-		images = append(images, n)
+		src := p.getSrc(n)
+		ext := filepath.Ext(src)
+		mimeType := mime.TypeByExtension(ext)
+		p.logger.Sugar().Debug(mimeType)
+		p.logger.Sugar().Debug(p.srcMimes)
+		for _, allowedMimeType := range p.srcMimes {
+			if allowedMimeType == mimeType {
+				images = append(images, n)
+				break
+			}
+		}
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		images = p.collectImagesToReplace(c, images)
@@ -219,17 +246,20 @@ func (p *Pixbooster) replaceImgWithPicture(n *html.Node) {
 }
 
 func (p *Pixbooster) addSourcesToPicture(picture *html.Node) {
-	var jpegSources []*html.Node
+	var imgSources []*html.Node
 
 	for c := picture.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.ElementNode && c.Data == "source" {
-			if c.Attr[1].Val == "image/jpeg" || c.Attr[1].Val == "image/png" {
-				jpegSources = append(jpegSources, c)
+			for _, allowedMimeType := range p.srcMimes {
+				if c.Attr[1].Val == allowedMimeType {
+					imgSources = append(imgSources, c)
+					break
+				}
 			}
 		}
 	}
 
-	for _, source := range jpegSources {
+	for _, source := range imgSources {
 		for _, format := range p.destFormats {
 			newSource := &html.Node{
 				Type: html.ElementNode,
@@ -326,6 +356,8 @@ func (p *Pixbooster) convertImageToFormat(imgURL string, format ImgFormat) (io.R
 	switch contentType {
 	case "image/jpeg":
 		img, decodeErr = jpeg.Decode(resp.Body)
+	case "image/png":
+		img, decodeErr = png.Decode(resp.Body)
 	default:
 		return nil, fmt.Errorf("unsupported input image format: %s", format.Extension)
 	}
