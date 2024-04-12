@@ -40,10 +40,12 @@ type Pixbooster struct {
 	rootURL     string
 	imgSuffix   string
 	destFormats []ImgFormat
-	srcMimes    []string
+	srcFormats  []ImgFormat
 	Nowebp      bool
 	Noavif      bool
 	Nojxl       bool
+	Nojpeg      bool
+	Nopng       bool
 }
 
 func (Pixbooster) CaddyModule() caddy.ModuleInfo {
@@ -59,8 +61,8 @@ func (p *Pixbooster) Provision(ctx caddy.Context) error {
 	p.destFormats = append(p.destFormats, ImgFormat{extension: ".jxl", mimeType: "image/jxl"})
 	p.destFormats = append(p.destFormats, ImgFormat{extension: ".avif", mimeType: "image/avif"})
 	p.destFormats = append(p.destFormats, ImgFormat{extension: ".webp", mimeType: "image/webp"})
-	p.srcMimes = append(p.srcMimes, "image/jpeg")
-	p.srcMimes = append(p.srcMimes, "image/png")
+	p.srcFormats = append(p.srcFormats, ImgFormat{extension: ".jpg", mimeType: "image/jpeg"})
+	p.srcFormats = append(p.srcFormats, ImgFormat{extension: ".png", mimeType: "image/png"})
 
 	return nil
 }
@@ -80,7 +82,7 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			p.logger.Error("Unsupported image format: " + r.URL.Path)
 			return fmt.Errorf("Unsupported image format: " + r.URL.Path)
 		}
-		if p.Nowebp && format.extension == ".webp" || p.Noavif && format.extension == ".avif" || p.Nojxl && format.extension == ".jxl" {
+		if !p.isOutputFormatAllowed(format) {
 			p.logger.Error(format.extension + "file requested but disabled by configuration")
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return nil
@@ -178,27 +180,28 @@ func (p *Pixbooster) IsSameSite(imageURL string) bool {
 	return imageURLParsed.Host == p.rootURL
 }
 
-func (p *Pixbooster) CollectImgs(n *html.Node, images []*html.Node) []*html.Node {
-	if n.Type == html.ElementNode && n.Data == "img" && p.IsSameSite(p.GetSrc(n)) && !p.hasAttr(n, "data-pixbooster-ignore") && !p.IsImageInsidePicture(n) {
-		src := p.GetSrc(n)
+func (p *Pixbooster) CollectImgs(n *html.Node, imgs []*html.Node) []*html.Node {
+	if n.Type == html.ElementNode && n.Data == "img" && p.IsSameSite(p.GetAttr(n, "src")) && !p.HasAttr(n, "data-pixbooster-ignore") && !p.IsImageInsidePicture(n) {
+		src := p.GetAttr(n, "src")
 		ext := filepath.Ext(src)
 		mimeType := mime.TypeByExtension(ext)
-		for _, allowedMimeType := range p.srcMimes {
-			if allowedMimeType == mimeType {
-				images = append(images, n)
+		p.logger.Debug(mimeType)
+		for _, format := range p.srcFormats {
+			if format.mimeType == mimeType {
+				imgs = append(imgs, n)
 				break
 			}
 		}
 	}
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		images = p.CollectImgs(c, images)
+		imgs = p.CollectImgs(c, imgs)
 	}
-	return images
+	return imgs
 }
 
 func (p *Pixbooster) CollectPictures(n *html.Node, pictures []*html.Node) []*html.Node {
-	if n.Type == html.ElementNode && n.Data == "picture" && !p.hasAttr(n, "data-pixbooster-ignore") {
+	if n.Type == html.ElementNode && n.Data == "picture" && !p.HasAttr(n, "data-pixbooster-ignore") {
 		pictures = append(pictures, n)
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -207,7 +210,7 @@ func (p *Pixbooster) CollectPictures(n *html.Node, pictures []*html.Node) []*htm
 	return pictures
 }
 
-func (p *Pixbooster) hasAttr(n *html.Node, name string) bool {
+func (p *Pixbooster) HasAttr(n *html.Node, name string) bool {
 	for _, attr := range n.Attr {
 		if attr.Key == name {
 			return true
@@ -234,17 +237,13 @@ func (p *Pixbooster) GetAttr(n *html.Node, attribute string) string {
 	return ""
 }
 
-func (p *Pixbooster) GetSrc(n *html.Node) string {
-	return p.GetAttr(n, "src")
-}
-
 func (p *Pixbooster) WrapImgWithPicture(n *html.Node) {
 	picture := &html.Node{
 		Type: html.ElementNode,
 		Data: "picture",
 	}
 	for _, attr := range n.Attr {
-		if attr.Key != "src" && attr.Key != "alt" {
+		if attr.Key != "src" && attr.Key != "alt" && attr.Key != "srcset" {
 			picture.Attr = append(picture.Attr, attr)
 		}
 	}
@@ -258,79 +257,100 @@ func (p *Pixbooster) WrapImgWithPicture(n *html.Node) {
 	picture.AppendChild(img)
 	n.Parent.InsertBefore(picture, n)
 	n.Parent.RemoveChild(n)
-	p.AddSourcesToPicture(picture, true)
+	p.AddSourcesToPicture(picture, false)
 }
 
 func (p *Pixbooster) AddSourcesToPicture(picture *html.Node, copyAttr bool) {
-	var imgSources []*html.Node
-	var existingSource *html.Node
+	if picture.Data != "picture" {
+		return
+	}
+
+	var sources []*html.Node
+	var imgNode *html.Node
+
 	for c := picture.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type == html.ElementNode && (c.Data == "source" || (c.Data == "img" && !p.IsImageInsidePicture(c))) {
-			var src string
-			if c.Data == "img" {
-				src = p.GetSrc(c)
-			} else {
-				src = p.GetAttr(c, "srcset")
-			}
-
-			ext := filepath.Ext(src)
-			mimeType := mime.TypeByExtension(ext)
-			for _, allowedMimeType := range p.srcMimes {
-				if mimeType == allowedMimeType {
-					if c.Data == "source" && existingSource == nil {
-						existingSource = c
-					}
-					imgSources = append(imgSources, c)
-					break
-				}
+		if c.Type == html.ElementNode {
+			if c.Data == "source" {
+				sources = append(sources, c)
+			} else if c.Data == "img" && imgNode == nil {
+				imgNode = c
 			}
 		}
 	}
 
-	for _, source := range imgSources {
+	if len(sources) == 0 && imgNode != nil {
+		sources = append(sources, imgNode)
+	}
+
+	for _, source := range sources {
+		p.AddSourcesToSource(source, copyAttr)
+	}
+}
+
+func (p *Pixbooster) AddSourcesToSource(source *html.Node, copyAttr bool) {
+	if p.HasAttr(source, "srcset") {
 		for _, format := range p.destFormats {
-			if p.Nowebp && format.extension == ".webp" || p.Noavif && format.extension == ".avif" || p.Nojxl && format.extension == ".jxl" {
-				continue
+			if p.isOutputFormatAllowed(format) {
+				p.AddSourceNode(source, p.GetOptimizedSrcset(p.GetAttr(source, "srcset"), format), format.mimeType, source.Data == "source")
 			}
-			newSource := &html.Node{
-				Type: html.ElementNode,
-				Data: "source",
-				Attr: make([]html.Attribute, 0, len(source.Attr)),
-			}
-
-			if copyAttr {
-				for _, attr := range source.Attr {
-					if attr.Key != "srcset" && attr.Key != "type" && attr.Key != "src" {
-						newSource.Attr = append(newSource.Attr, attr)
-					}
-				}
-			}
-
-			var src string
-			if source.Data == "img" {
-				src = p.GetSrc(source)
-			} else {
-				src = p.GetAttr(source, "srcset")
-			}
-
-			newSource.Attr = append(newSource.Attr, html.Attribute{
-				Key: "srcset",
-				Val: p.GetOptimizedImageURL(src, format),
-			})
-
-			newSource.Attr = append(newSource.Attr, html.Attribute{
-				Key: "type",
-				Val: format.mimeType,
-			})
-
-			if existingSource != nil {
-				picture.InsertBefore(newSource, existingSource)
-			} else {
-				picture.AppendChild(newSource)
-			}
-			newSource.Parent = picture
 		}
 	}
+
+	src := p.GetAttr(source, "src")
+	if source.Data == "img" && src != "" && p.IsSameSite(src) && p.isInputFormatAllowed(src) {
+		for _, format := range p.destFormats {
+			if p.isOutputFormatAllowed(format) {
+				p.AddSourceNode(source, p.GetOptimizedImageURL(src, format), format.mimeType, false)
+			}
+		}
+	}
+}
+
+func (p *Pixbooster) GetOptimizedSrcset(srcset string, format ImgFormat) string {
+	srcsetParts := strings.Split(srcset, ",")
+
+	for i, part := range srcsetParts {
+		part = strings.TrimSpace(part)
+		subParts := strings.Fields(part)
+
+		for j, subPart := range subParts {
+			if p.isInputFormatAllowed(subPart) && p.IsSameSite(subPart) {
+				subParts[j] = p.GetOptimizedImageURL(subPart, format)
+			}
+		}
+
+		srcsetParts[i] = strings.Join(subParts, " ")
+	}
+
+	return strings.Join(srcsetParts, ",")
+}
+
+func (p *Pixbooster) AddSourceNode(n *html.Node, srcset string, mimeType string, copyAttr bool) {
+	newSource := &html.Node{
+		Type: html.ElementNode,
+		Data: "source",
+		Attr: make([]html.Attribute, 0, len(n.Attr)),
+	}
+
+	if copyAttr {
+		for _, attr := range n.Attr {
+			if attr.Key != "srcset" && attr.Key != "type" && attr.Key != "src" {
+				newSource.Attr = append(newSource.Attr, attr)
+			}
+		}
+	}
+
+	newSource.Attr = append(newSource.Attr, html.Attribute{
+		Key: "srcset",
+		Val: srcset,
+	})
+
+	newSource.Attr = append(newSource.Attr, html.Attribute{
+		Key: "type",
+		Val: mimeType,
+	})
+
+	n.Parent.InsertBefore(newSource, n)
 }
 
 func (p *Pixbooster) GetOptimizedImageURL(originalURL string, format ImgFormat) string {
@@ -429,6 +449,38 @@ func (p *Pixbooster) ConvertImageToFormat(imgURL string, format ImgFormat) (io.R
 	return buf, nil
 }
 
+func (p *Pixbooster) isOutputFormatAllowed(format ImgFormat) bool {
+	switch format.extension {
+	case ".webp":
+		return !p.Nowebp
+	case ".avif":
+		return !p.Noavif
+	case ".jxl":
+		return !p.Nojxl
+	default:
+		return false
+	}
+}
+
+func (p *Pixbooster) isInputFormatAllowed(filename string) bool {
+	var format ImgFormat
+	mimeType := mime.TypeByExtension(filepath.Ext(filename))
+	for _, f := range p.srcFormats {
+		if f.mimeType == mimeType {
+			format = f
+		}
+	}
+
+	switch format.extension {
+	case ".jpg":
+		return !p.Nojpeg
+	case ".png":
+		return !p.Nopng
+	default:
+		return false
+	}
+}
+
 // UnmarshalCaddyfile implements caddyfile.Unmarshaler. Syntax:
 //
 //	pixbooster [nowebp|noavif|nojxl]
@@ -442,6 +494,10 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			p.Noavif = true
 		case "nojxl":
 			p.Nojxl = true
+		case "nojpeg":
+			p.Nojpeg = true
+		case "nopng":
+			p.Nopng = true
 		default:
 			return d.ArgErr()
 		}
