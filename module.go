@@ -31,8 +31,8 @@ func init() {
 }
 
 type ImgFormat struct {
-	Extension string
-	MimeType  string
+	extension string
+	mimeType  string
 }
 
 type Pixbooster struct {
@@ -54,9 +54,9 @@ func (Pixbooster) CaddyModule() caddy.ModuleInfo {
 func (p *Pixbooster) Provision(ctx caddy.Context) error {
 	p.logger = ctx.Logger(p)
 	p.imgSuffix = "pixbooster"
-	p.destFormats = append(p.destFormats, ImgFormat{Extension: ".jxl", MimeType: "image/jxl"})
-	p.destFormats = append(p.destFormats, ImgFormat{Extension: ".avif", MimeType: "image/avif"})
-	p.destFormats = append(p.destFormats, ImgFormat{Extension: ".webp", MimeType: "image/webp"})
+	p.destFormats = append(p.destFormats, ImgFormat{extension: ".jxl", mimeType: "image/jxl"})
+	p.destFormats = append(p.destFormats, ImgFormat{extension: ".avif", mimeType: "image/avif"})
+	p.destFormats = append(p.destFormats, ImgFormat{extension: ".webp", mimeType: "image/webp"})
 	p.srcMimes = append(p.srcMimes, "image/jpeg")
 	p.srcMimes = append(p.srcMimes, "image/png")
 
@@ -64,31 +64,31 @@ func (p *Pixbooster) Provision(ctx caddy.Context) error {
 }
 
 func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	p.rootURL = p.getRootUrl(r)
-	if p.isOptimizedUrl(r.URL.Path) {
+	p.rootURL = p.GetRootUrl(r)
+	if p.IsOptimizedUrl(r.URL.Path) {
 		format := ImgFormat{}
 		for _, f := range p.destFormats {
-			if strings.HasSuffix(r.URL.Path, f.Extension) {
+			if strings.HasSuffix(r.URL.Path, f.extension) {
 				format = f
 				break
 			}
 		}
-		if format.Extension == "" {
+		if format.extension == "" {
 			http.Error(w, "Unsupported image format", http.StatusBadRequest)
 			p.logger.Error("Unsupported image format: " + r.URL.Path)
 			return fmt.Errorf("Unsupported image format: " + r.URL.Path)
 		}
 
-		originalImageUrl := p.getOriginalImageURL(p.rootURL + r.RequestURI)
-		imgStream, err := p.convertImageToFormat(originalImageUrl, format)
+		originalImageUrl := p.GetOriginalImageURL(p.rootURL + r.RequestURI)
+		imgStream, err := p.ConvertImageToFormat(originalImageUrl, format)
 		if err != nil {
-			p.logger.Error("Error converting image to format: " + format.Extension)
+			p.logger.Error("Error converting image to format: " + format.extension)
 			p.logger.Sugar().Error(err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return nil
 		}
 
-		w.Header().Set("Content-Type", format.MimeType)
+		w.Header().Set("Content-Type", format.mimeType)
 
 		if _, err := io.Copy(w, imgStream); err != nil {
 			p.logger.Error("Error sending image data: " + err.Error())
@@ -113,15 +113,15 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 				return err
 			}
 
-			pictures := p.collectPictures(doc, []*html.Node{})
-			imgs := p.collectImg(doc, []*html.Node{})
+			pictures := p.CollectPictures(doc, []*html.Node{})
+			imgs := p.CollectImg(doc, []*html.Node{})
 
 			for _, img := range imgs {
-				p.wrapImgWithPicture(img)
+				p.WrapImgWithPicture(img)
 			}
 
 			for _, picture := range pictures {
-				p.addSourcesToPicture(picture, false)
+				p.AddSourcesToPicture(picture, false)
 			}
 
 			w.Header().Set("Content-Type", "text/html")
@@ -143,7 +143,7 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	return nil
 }
 
-func (p *Pixbooster) getRootUrl(r *http.Request) string {
+func (p *Pixbooster) GetRootUrl(r *http.Request) string {
 	var proto string
 	if r.TLS == nil {
 		proto = "http://"
@@ -157,7 +157,7 @@ func (p *Pixbooster) getRootUrl(r *http.Request) string {
 	return proto + r.Host + port
 }
 
-func (p *Pixbooster) isSameSite(imageURL string) bool {
+func (p *Pixbooster) IsSameSite(imageURL string) bool {
 	if !strings.HasPrefix(imageURL, "http://") && !strings.HasPrefix(imageURL, "https://") {
 		return true
 	}
@@ -171,9 +171,9 @@ func (p *Pixbooster) isSameSite(imageURL string) bool {
 	return imageURLParsed.Host == p.rootURL
 }
 
-func (p *Pixbooster) collectImg(n *html.Node, images []*html.Node) []*html.Node {
-	if n.Type == html.ElementNode && n.Data == "img" && p.isSameSite(p.getSrc(n)) && !p.isImageInsidePicture(n) {
-		src := p.getSrc(n)
+func (p *Pixbooster) CollectImg(n *html.Node, images []*html.Node) []*html.Node {
+	if n.Type == html.ElementNode && n.Data == "img" && p.IsSameSite(p.GetSrc(n)) && !p.IsImageInsidePicture(n) {
+		src := p.GetSrc(n)
 		ext := filepath.Ext(src)
 		mimeType := mime.TypeByExtension(ext)
 		for _, allowedMimeType := range p.srcMimes {
@@ -185,22 +185,22 @@ func (p *Pixbooster) collectImg(n *html.Node, images []*html.Node) []*html.Node 
 	}
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		images = p.collectImg(c, images)
+		images = p.CollectImg(c, images)
 	}
 	return images
 }
 
-func (p *Pixbooster) collectPictures(n *html.Node, pictures []*html.Node) []*html.Node {
+func (p *Pixbooster) CollectPictures(n *html.Node, pictures []*html.Node) []*html.Node {
 	if n.Type == html.ElementNode && n.Data == "picture" {
 		pictures = append(pictures, n)
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		pictures = p.collectPictures(c, pictures)
+		pictures = p.CollectPictures(c, pictures)
 	}
 	return pictures
 }
 
-func (p *Pixbooster) isImageInsidePicture(img *html.Node) bool {
+func (p *Pixbooster) IsImageInsidePicture(img *html.Node) bool {
 	for parent := img.Parent; parent != nil; parent = parent.Parent {
 		if parent.Type == html.ElementNode && parent.Data == "picture" {
 			return true
@@ -209,7 +209,7 @@ func (p *Pixbooster) isImageInsidePicture(img *html.Node) bool {
 	return false
 }
 
-func (p *Pixbooster) getAttr(n *html.Node, attribute string) string {
+func (p *Pixbooster) GetAttr(n *html.Node, attribute string) string {
 	for _, attr := range n.Attr {
 		if attr.Key == attribute {
 			return attr.Val
@@ -218,11 +218,11 @@ func (p *Pixbooster) getAttr(n *html.Node, attribute string) string {
 	return ""
 }
 
-func (p *Pixbooster) getSrc(n *html.Node) string {
-	return p.getAttr(n, "src")
+func (p *Pixbooster) GetSrc(n *html.Node) string {
+	return p.GetAttr(n, "src")
 }
 
-func (p *Pixbooster) wrapImgWithPicture(n *html.Node) {
+func (p *Pixbooster) WrapImgWithPicture(n *html.Node) {
 	picture := &html.Node{
 		Type: html.ElementNode,
 		Data: "picture",
@@ -242,19 +242,19 @@ func (p *Pixbooster) wrapImgWithPicture(n *html.Node) {
 	picture.AppendChild(img)
 	n.Parent.InsertBefore(picture, n)
 	n.Parent.RemoveChild(n)
-	p.addSourcesToPicture(picture, true)
+	p.AddSourcesToPicture(picture, true)
 }
 
-func (p *Pixbooster) addSourcesToPicture(picture *html.Node, copyAttr bool) {
+func (p *Pixbooster) AddSourcesToPicture(picture *html.Node, copyAttr bool) {
 	var imgSources []*html.Node
 	var existingSource *html.Node
 	for c := picture.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type == html.ElementNode && (c.Data == "source" || (c.Data == "img" && !p.isImageInsidePicture(c))) {
+		if c.Type == html.ElementNode && (c.Data == "source" || (c.Data == "img" && !p.IsImageInsidePicture(c))) {
 			var src string
 			if c.Data == "img" {
-				src = p.getSrc(c)
+				src = p.GetSrc(c)
 			} else {
-				src = p.getAttr(c, "srcset")
+				src = p.GetAttr(c, "srcset")
 			}
 
 			ext := filepath.Ext(src)
@@ -289,19 +289,19 @@ func (p *Pixbooster) addSourcesToPicture(picture *html.Node, copyAttr bool) {
 
 			var src string
 			if source.Data == "img" {
-				src = p.getSrc(source)
+				src = p.GetSrc(source)
 			} else {
-				src = p.getAttr(source, "srcset")
+				src = p.GetAttr(source, "srcset")
 			}
 
 			newSource.Attr = append(newSource.Attr, html.Attribute{
 				Key: "srcset",
-				Val: p.getOptimizedImageURL(src, format),
+				Val: p.GetOptimizedImageURL(src, format),
 			})
 
 			newSource.Attr = append(newSource.Attr, html.Attribute{
 				Key: "type",
-				Val: format.MimeType,
+				Val: format.mimeType,
 			})
 
 			if existingSource != nil {
@@ -314,20 +314,20 @@ func (p *Pixbooster) addSourcesToPicture(picture *html.Node, copyAttr bool) {
 	}
 }
 
-func (p *Pixbooster) getOptimizedImageURL(originalURL string, format ImgFormat) string {
+func (p *Pixbooster) GetOptimizedImageURL(originalURL string, format ImgFormat) string {
 	parsedURL, err := url.Parse(originalURL)
 	if err != nil {
 		p.logger.Sugar().Fatalf("Error parsing URL: %v", err)
 	}
 
-	newPath := parsedURL.Path + "." + p.imgSuffix + format.Extension
+	newPath := parsedURL.Path + "." + p.imgSuffix + format.extension
 
 	parsedURL.Path = newPath
 
 	return parsedURL.String()
 }
 
-func (p *Pixbooster) getOriginalImageURL(optimizedURL string) string {
+func (p *Pixbooster) GetOriginalImageURL(optimizedURL string) string {
 
 	pathParts := strings.Split(optimizedURL, ".")
 	pixboosterIndex := -1
@@ -346,7 +346,7 @@ func (p *Pixbooster) getOriginalImageURL(optimizedURL string) string {
 	return strings.Join(pathParts[:pixboosterIndex], ".")
 }
 
-func (p *Pixbooster) isOptimizedUrl(myurl string) bool {
+func (p *Pixbooster) IsOptimizedUrl(myurl string) bool {
 	parsedURL, err := url.Parse(myurl)
 	if err != nil {
 		p.logger.Sugar().Errorf("Error parsing URL: %v", err)
@@ -366,7 +366,7 @@ func (p *Pixbooster) isOptimizedUrl(myurl string) bool {
 	return pixboosterIndex != -1
 }
 
-func (p *Pixbooster) convertImageToFormat(imgURL string, format ImgFormat) (io.Reader, error) {
+func (p *Pixbooster) ConvertImageToFormat(imgURL string, format ImgFormat) (io.Reader, error) {
 	resp, err := http.Get(imgURL)
 	if err != nil {
 		return nil, err
@@ -384,7 +384,7 @@ func (p *Pixbooster) convertImageToFormat(imgURL string, format ImgFormat) (io.R
 	case "image/png":
 		img, decodeErr = png.Decode(resp.Body)
 	default:
-		return nil, fmt.Errorf("unsupported input image format: %s", format.Extension)
+		return nil, fmt.Errorf("unsupported input image format: %s", format.extension)
 	}
 	if decodeErr != nil {
 		return nil, decodeErr
@@ -392,7 +392,7 @@ func (p *Pixbooster) convertImageToFormat(imgURL string, format ImgFormat) (io.R
 
 	buf := new(bytes.Buffer)
 
-	switch format.Extension {
+	switch format.extension {
 	case ".webp":
 		err = webp.Encode(buf, img, &webp.Options{Lossless: true})
 	case ".avif":
@@ -400,7 +400,7 @@ func (p *Pixbooster) convertImageToFormat(imgURL string, format ImgFormat) (io.R
 	case ".jxl":
 		err = jpegxl.Encode(buf, img)
 	default:
-		return nil, fmt.Errorf("unsupported output image format: %s", format.Extension)
+		return nil, fmt.Errorf("unsupported output image format: %s", format.extension)
 	}
 
 	if err != nil {
