@@ -119,8 +119,8 @@ $ curl http://localhost:8080
 ```
 
 ## TODO ?
--[ ] Handle CSS
--[ ] Avoid CGO
--[ ] Provide [JXL polyfill](https://github.com/niutech/jxl.js)
--[ ] Add configuration to set default conversion quality
--[ ] Add `data-pixbooster-quality` html attribute to force quality setting on individual picture
+- [ ] Handle CSS
+- [ ] Avoid CGO
+- [ ] Provide [JXL polyfill](https://github.com/niutech/jxl.js)
+- [ ] Add configuration to set default conversion quality
+- [ ] Add `data-pixbooster-quality` html attribute to force quality setting on individual picture
