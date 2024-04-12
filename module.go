@@ -36,16 +36,17 @@ type ImgFormat struct {
 }
 
 type Pixbooster struct {
-	logger      *zap.Logger
-	rootURL     string
-	imgSuffix   string
-	destFormats []ImgFormat
-	srcFormats  []ImgFormat
-	Nowebp      bool
-	Noavif      bool
-	Nojxl       bool
-	Nojpeg      bool
-	Nopng       bool
+	logger       *zap.Logger
+	rootURL      string
+	imgSuffix    string
+	destFormats  []ImgFormat
+	srcFormats   []ImgFormat
+	Nowebpoutput bool
+	Nowebpinput  bool
+	Noavif       bool
+	Nojxl        bool
+	Nojpeg       bool
+	Nopng        bool
 }
 
 func (Pixbooster) CaddyModule() caddy.ModuleInfo {
@@ -63,6 +64,7 @@ func (p *Pixbooster) Provision(ctx caddy.Context) error {
 	p.destFormats = append(p.destFormats, ImgFormat{extension: ".webp", mimeType: "image/webp"})
 	p.srcFormats = append(p.srcFormats, ImgFormat{extension: ".jpg", mimeType: "image/jpeg"})
 	p.srcFormats = append(p.srcFormats, ImgFormat{extension: ".png", mimeType: "image/png"})
+	p.srcFormats = append(p.srcFormats, ImgFormat{extension: ".webp", mimeType: "image/webp"})
 
 	return nil
 }
@@ -452,7 +454,7 @@ func (p *Pixbooster) ConvertImageToFormat(imgURL string, format ImgFormat) (io.R
 func (p *Pixbooster) isOutputFormatAllowed(format ImgFormat) bool {
 	switch format.extension {
 	case ".webp":
-		return !p.Nowebp
+		return !p.Nowebpoutput
 	case ".avif":
 		return !p.Noavif
 	case ".jxl":
@@ -476,6 +478,8 @@ func (p *Pixbooster) isInputFormatAllowed(filename string) bool {
 		return !p.Nojpeg
 	case ".png":
 		return !p.Nopng
+	case ".webp":
+		return !p.Nowebpinput
 	default:
 		return false
 	}
@@ -483,13 +487,15 @@ func (p *Pixbooster) isInputFormatAllowed(filename string) bool {
 
 // UnmarshalCaddyfile implements caddyfile.Unmarshaler. Syntax:
 //
-//	pixbooster [nowebp|noavif|nojxl]
+//	pixbooster [nowebpoutput|noavif|nojxl|nojpg|nopng]
 func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next()
 	for d.Next() {
 		switch d.Val() {
-		case "nowebp":
-			p.Nowebp = true
+		case "nowebpoutput":
+			p.Nowebpoutput = true
+		case "nowebpinput":
+			p.Nowebpinput = true
 		case "noavif":
 			p.Noavif = true
 		case "nojxl":
