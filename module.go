@@ -41,7 +41,9 @@ type Pixbooster struct {
 	imgSuffix   string
 	destFormats []ImgFormat
 	srcMimes    []string
-	nowebp      bool
+	Nowebp      bool
+	Noavif      bool
+	Nojxl       bool
 }
 
 func (Pixbooster) CaddyModule() caddy.ModuleInfo {
@@ -78,6 +80,11 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			p.logger.Error("Unsupported image format: " + r.URL.Path)
 			return fmt.Errorf("Unsupported image format: " + r.URL.Path)
 		}
+		if p.Nowebp && format.extension == ".webp" || p.Noavif && format.extension == ".avif" || p.Nojxl && format.extension == ".jxl" {
+			p.logger.Error(format.extension + "file requested but disabled by configuration")
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return nil
+		}
 
 		originalImageUrl := p.GetOriginalImageURL(p.rootURL + r.RequestURI)
 		imgStream, err := p.ConvertImageToFormat(originalImageUrl, format)
@@ -85,7 +92,7 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			p.logger.Error("Error converting image to format: " + format.extension)
 			p.logger.Sugar().Error(err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return nil
+			return err
 		}
 
 		w.Header().Set("Content-Type", format.mimeType)
@@ -273,6 +280,10 @@ func (p *Pixbooster) AddSourcesToPicture(picture *html.Node, copyAttr bool) {
 
 	for _, source := range imgSources {
 		for _, format := range p.destFormats {
+			p.logger.Sugar().Debug(p.Noavif, p.Nojxl, p.Nowebp)
+			if p.Nowebp && format.extension == ".webp" || p.Noavif && format.extension == ".avif" || p.Nojxl && format.extension == ".jxl" {
+				continue
+			}
 			newSource := &html.Node{
 				Type: html.ElementNode,
 				Data: "source",
@@ -411,21 +422,23 @@ func (p *Pixbooster) ConvertImageToFormat(imgURL string, format ImgFormat) (io.R
 }
 
 func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	d.Next()
 	for d.Next() {
-		if d.NextArg() {
+		switch d.Val() {
+		case "nowebp":
+			p.Nowebp = true
+		case "noavif":
+			p.Noavif = true
+		case "nojxl":
+			p.Nojxl = true
+		default:
 			return d.ArgErr()
 		}
-		for d.NextBlock(0) {
-			switch d.Val() {
-			case "nowebp":
-				p.nowebp = true
-			default:
-				return d.Errf("unrecognized subdirective: %s", d.Val())
-			}
-		}
 	}
+
 	return nil
 }
+
 func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
 	var p Pixbooster
 	err := p.UnmarshalCaddyfile(h.Dispenser)
