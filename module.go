@@ -121,7 +121,7 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			}
 
 			pictures := p.CollectPictures(doc, []*html.Node{})
-			imgs := p.CollectImg(doc, []*html.Node{})
+			imgs := p.CollectImgs(doc, []*html.Node{})
 
 			for _, img := range imgs {
 				p.WrapImgWithPicture(img)
@@ -178,8 +178,8 @@ func (p *Pixbooster) IsSameSite(imageURL string) bool {
 	return imageURLParsed.Host == p.rootURL
 }
 
-func (p *Pixbooster) CollectImg(n *html.Node, images []*html.Node) []*html.Node {
-	if n.Type == html.ElementNode && n.Data == "img" && p.IsSameSite(p.GetSrc(n)) && !p.IsImageInsidePicture(n) {
+func (p *Pixbooster) CollectImgs(n *html.Node, images []*html.Node) []*html.Node {
+	if n.Type == html.ElementNode && n.Data == "img" && p.IsSameSite(p.GetSrc(n)) && !p.hasAttr(n, "data-pixbooster-ignore") && !p.IsImageInsidePicture(n) {
 		src := p.GetSrc(n)
 		ext := filepath.Ext(src)
 		mimeType := mime.TypeByExtension(ext)
@@ -192,19 +192,28 @@ func (p *Pixbooster) CollectImg(n *html.Node, images []*html.Node) []*html.Node 
 	}
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		images = p.CollectImg(c, images)
+		images = p.CollectImgs(c, images)
 	}
 	return images
 }
 
 func (p *Pixbooster) CollectPictures(n *html.Node, pictures []*html.Node) []*html.Node {
-	if n.Type == html.ElementNode && n.Data == "picture" {
+	if n.Type == html.ElementNode && n.Data == "picture" && !p.hasAttr(n, "data-pixbooster-ignore") {
 		pictures = append(pictures, n)
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		pictures = p.CollectPictures(c, pictures)
 	}
 	return pictures
+}
+
+func (p *Pixbooster) hasAttr(n *html.Node, name string) bool {
+	for _, attr := range n.Attr {
+		if attr.Key == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Pixbooster) IsImageInsidePicture(img *html.Node) bool {
@@ -280,7 +289,6 @@ func (p *Pixbooster) AddSourcesToPicture(picture *html.Node, copyAttr bool) {
 
 	for _, source := range imgSources {
 		for _, format := range p.destFormats {
-			p.logger.Sugar().Debug(p.Noavif, p.Nojxl, p.Nowebp)
 			if p.Nowebp && format.extension == ".webp" || p.Noavif && format.extension == ".avif" || p.Nojxl && format.extension == ".jxl" {
 				continue
 			}
@@ -421,6 +429,9 @@ func (p *Pixbooster) ConvertImageToFormat(imgURL string, format ImgFormat) (io.R
 	return buf, nil
 }
 
+// UnmarshalCaddyfile implements caddyfile.Unmarshaler. Syntax:
+//
+//	pixbooster [nowebp|noavif|nojxl]
 func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next()
 	for d.Next() {
