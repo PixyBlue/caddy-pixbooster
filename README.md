@@ -119,9 +119,9 @@ $ curl http://localhost:8080
 ```
 
 ## TODO ?
-- [ ] Handle CSS
-- [ ] User image lib to handle WebP input
-- [ ] Completly avoid CGO to support WebP output
-- [ ] Provide [JXL polyfill](https://github.com/niutech/jxl.js)
 - [ ] Add configuration to set default conversion quality
+- [ ] Provide [JXL polyfill](https://github.com/niutech/jxl.js)
 - [ ] Add `data-pixbooster-quality` html attribute to force quality setting on individual picture
+- [ ] User image lib to handle WebP input
+- [ ] Handle CSS
+- [ ] Completly avoid CGO to support WebP output
