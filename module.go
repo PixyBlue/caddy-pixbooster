@@ -6,7 +6,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -91,7 +90,8 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 
 	if next != nil {
-		rec := httptest.NewRecorder()
+		buf := &bytes.Buffer{}
+		rec := caddyhttp.NewResponseRecorder(w, buf, func(s int, h http.Header) bool { return true })
 		err := next.ServeHTTP(rec, r)
 		if err != nil {
 			return err
@@ -100,7 +100,7 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		contentType := rec.Header().Get("Content-Type")
 		if strings.HasPrefix(contentType, "text/html") {
 
-			body := rec.Body.Bytes()
+			body := buf.Bytes()
 			doc, err := html.Parse(bytes.NewReader(body))
 			if err != nil {
 				return err
@@ -117,18 +117,29 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 				p.AddSourcesToPicture(picture, false)
 			}
 
-			w.Header().Set("Content-Type", "text/html")
-			if err := html.Render(w, doc); err != nil {
+			var result bytes.Buffer
+			if err := html.Render(&result, doc); err != nil {
 				return err
 			}
-			return nil
+
+			for k, vv := range rec.Header() {
+				v := make([]string, len(vv))
+				copy(v, vv)
+				w.Header()[k] = v
+			}
+			delete(rec.Header(), "Content-Length")
+			w.WriteHeader(rec.Status())
+			_, err = io.Copy(w, &result)
+			return err
 		}
 
-		for k, v := range rec.Header() {
+		for k, vv := range rec.Header() {
+			v := make([]string, len(vv))
+			copy(v, vv)
 			w.Header()[k] = v
 		}
-		w.WriteHeader(rec.Code)
-		_, err = io.Copy(w, rec.Body)
+		w.WriteHeader(rec.Status())
+		_, err = io.Copy(w, buf)
 		return err
 	}
 
