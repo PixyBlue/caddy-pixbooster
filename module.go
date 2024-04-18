@@ -65,6 +65,7 @@ func (Pixbooster) CaddyModule() caddy.ModuleInfo {
 }
 
 func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	p.logger.Debug("Pixbooster start")
 	p.rootURL = p.GetRootUrl(r)
 	if p.IsOptimizedUrl(r.URL.Path) {
 		p.logger.Sugar().DPanic(r.URL.Path)
