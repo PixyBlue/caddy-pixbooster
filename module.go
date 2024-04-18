@@ -68,7 +68,7 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	p.logger.Debug("Pixbooster start")
 	p.rootURL = p.GetRootUrl(r)
 	if p.IsOptimizedUrl(r.URL.Path) {
-		p.logger.Sugar().Debug(r.URL.Path)
+		p.logger.Debug("Optimized image URL: " + r.URL.Path)
 		format := ImgFormat{}
 		for _, f := range p.destFormats {
 			if strings.HasSuffix(r.URL.Path, f.extension) {
@@ -88,6 +88,7 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		}
 
 		originalImageUrl := p.GetOriginalImageURL(p.rootURL + r.RequestURI)
+		p.logger.Debug("Original image URL: " + originalImageUrl)
 		imgStream, err := p.ConvertImageToFormat(originalImageUrl, format)
 		if err != nil {
 			p.logger.Error("Error converting image to format: " + format.extension)
