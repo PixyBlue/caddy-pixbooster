@@ -61,11 +61,11 @@ func (p *Pixbooster) ConvertImageToFormat(imgURL string, format ImgFormat) (io.R
 
 	switch format.extension {
 	case ".webp":
-		err = webp.Encode(buf, img, &webp.Options{Lossless: true})
+		err = webp.Encode(buf, img, &webp.Options{Quality: float32(p.WebpConfig.Quality), Lossless: p.WebpConfig.Lossless, Exact: p.WebpConfig.Exact})
 	case ".avif":
-		err = avif.Encode(buf, img)
+		err = avif.Encode(buf, img, p.AvifConfig)
 	case ".jxl":
-		err = jpegxl.Encode(buf, img)
+		err = jpegxl.Encode(buf, img, p.JxlConfig)
 	default:
 		return nil, fmt.Errorf("unsupported output image format: %s", format.extension)
 	}

@@ -109,7 +109,7 @@ Add needed picture files to `public`.
 ### Build & Run
 
 ```sh
-$ CGO_ENABLED=1 xcaddy run --config Caddyfile
+$ CGO_ENABLED=1 xcaddy run --config Caddyfile #CGO is required to enable convertion to the WebP format
 ```
 
 ### See the magic
@@ -118,10 +118,49 @@ $ CGO_ENABLED=1 xcaddy run --config Caddyfile
 $ curl http://localhost:8080
 ```
 
+## Detailed configuration
+### Syntax
+```
+pixbooster [nowebpoutput|noavif|nojxl|nojpg|nopng] {
+	[nowebpoutput|noavif|nojxl|nojpg|nopng]
+	quality <integer between 0 and 100>
+	webp {
+		quality <integer between 0 and 100>
+		lossless
+		exact
+	}
+	avif {
+		quality <integer between 0 and 100>
+		qualityalpha <integer between 0 and 100>
+		speed <integer between 0 and 10>
+	}
+	jxl {
+		quality <integer between 0 and 100>
+		effort <integer between 0 and 10>
+	}
+}
+```
+Pixbooster must be enabled in a `route` directive.
+
+### Samples
+The Caddfyfile configuration enable you to access to all options offered by the libraries we use. Here is a complete sample:
+
+```
+http://localhost:8080 {
+    route {
+        pixbooster {
+            nowebpoutput
+            nojxl
+            avif {
+                quality 65
+                speed 7
+            }
+        }
+    }
+}
+```
 ## TODO ?
-- [ ] Add configuration to set default conversion quality
 - [ ] Provide [JXL polyfill](https://github.com/niutech/jxl.js)
 - [ ] Add `data-pixbooster-quality` html attribute to force quality setting on individual picture
-- [ ] User image lib to handle WebP input
 - [ ] Handle CSS
 - [ ] Completly avoid CGO to support WebP output

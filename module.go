@@ -8,12 +8,15 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/gen2brain/avif"
+	"github.com/gen2brain/jpegxl"
 	"go.uber.org/zap"
 	"golang.org/x/net/html"
 )
@@ -41,6 +44,17 @@ type Pixbooster struct {
 	Nojxl        bool
 	Nojpeg       bool
 	Nopng        bool
+
+	Quality    int
+	WebpConfig WebpConfig
+	AvifConfig avif.Options
+	JxlConfig  jpegxl.Options
+}
+
+type WebpConfig struct {
+	Quality  int
+	Lossless bool
+	Exact    bool
 }
 
 func (Pixbooster) CaddyModule() caddy.ModuleInfo {
@@ -53,6 +67,7 @@ func (Pixbooster) CaddyModule() caddy.ModuleInfo {
 func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	p.rootURL = p.GetRootUrl(r)
 	if p.IsOptimizedUrl(r.URL.Path) {
+		p.logger.Sugar().DPanic(r.URL.Path)
 		format := ImgFormat{}
 		for _, f := range p.destFormats {
 			if strings.HasSuffix(r.URL.Path, f.extension) {
@@ -436,9 +451,35 @@ func (p *Pixbooster) isInputFormatAllowed(filename string) bool {
 
 // UnmarshalCaddyfile implements caddyfile.Unmarshaler. Syntax:
 //
-//	pixbooster [nowebpoutput|noavif|nojxl|nojpg|nopng]
+//	pixbooster [nowebpoutput|noavif|nojxl|nojpg|nopng] {
+//		[nowebpoutput|noavif|nojxl|nojpg|nopng]
+//		quality <integer between 0 and 100>
+//		webp {
+//			quality <integer between 0 and 100>
+//			lossless
+//			exact
+//		}
+//		avif {
+//			quality <integer between 0 and 100>
+//			qualityalpha <integer between 0 and 100>
+//			speed <integer between 0 and 10>
+//		}
+//		jxl {
+//			quality <integer between 0 and 100>
+//			effort <integer between 0 and 10>
+//		}
+//	}
+//
+// The 'quality' value is inherited by webp.quality, avif.quality, and jxl.quality if not specified.
+// The 'speed' and 'effort' values should be integers between 0 and 10.
+// The 'lossless' and 'exact' flags are set to true if specified.
+// All directives are optional.
 func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	d.Next()
+	var inBlock bool
+	if d.NextBlock(0) {
+		inBlock = true
+	}
+
 	for d.Next() {
 		switch d.Val() {
 		case "nowebpoutput":
@@ -453,10 +494,116 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			p.Nojpeg = true
 		case "nopng":
 			p.Nopng = true
+		case "quality":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			quality, err := strconv.Atoi(d.Val())
+			if err != nil || quality < 0 || quality > 100 {
+				return fmt.Errorf("invalid quality value: %s", d.Val())
+			}
+			p.Quality = quality
+		case "avif":
+			if inBlock && d.NextBlock(0) {
+				p.AvifConfig = avif.Options{Quality: p.Quality}
+				for d.Next() {
+					switch d.Val() {
+					case "quality":
+						if !d.NextArg() {
+							return d.ArgErr()
+						}
+						quality, err := strconv.Atoi(d.Val())
+						if err != nil || quality < 0 || quality > 100 {
+							return fmt.Errorf("invalid avif quality value: %s", d.Val())
+						}
+						p.AvifConfig.Quality = quality
+					case "qualityalpha":
+						if !d.NextArg() {
+							return d.ArgErr()
+						}
+						qualityAlpha, err := strconv.Atoi(d.Val())
+						if err != nil || qualityAlpha < 0 || qualityAlpha > 100 {
+							return fmt.Errorf("invalid avif qualityalpha value: %s", d.Val())
+						}
+						p.AvifConfig.QualityAlpha = qualityAlpha
+					case "speed":
+						if !d.NextArg() {
+							return d.ArgErr()
+						}
+						speed, err := strconv.Atoi(d.Val())
+						if err != nil || speed < 0 || speed > 10 {
+							return fmt.Errorf("invalid avif speed value: %s", d.Val())
+						}
+						p.AvifConfig.Speed = speed
+					default:
+						return d.ArgErr()
+					}
+				}
+			} else {
+				p.AvifConfig = avif.Options{Quality: p.Quality}
+			}
+		case "jxl":
+			if inBlock && d.NextBlock(0) {
+				p.JxlConfig = jpegxl.Options{Quality: p.Quality}
+				for d.Next() {
+					switch d.Val() {
+					case "quality":
+						if !d.NextArg() {
+							return d.ArgErr()
+						}
+						quality, err := strconv.Atoi(d.Val())
+						if err != nil || quality < 0 || quality > 100 {
+							return fmt.Errorf("invalid jxl quality value: %s", d.Val())
+						}
+						p.JxlConfig.Quality = quality
+					case "effort":
+						if !d.NextArg() {
+							return d.ArgErr()
+						}
+						effort, err := strconv.Atoi(d.Val())
+						if err != nil || effort < 0 || effort > 10 {
+							return fmt.Errorf("invalid jxl effort value: %s", d.Val())
+						}
+						p.JxlConfig.Effort = effort
+					default:
+						return d.ArgErr()
+					}
+				}
+			} else {
+				return d.ArgErr()
+			}
+		case "webp":
+			if inBlock && d.NextBlock(0) {
+				p.WebpConfig = WebpConfig{Quality: p.Quality}
+				for d.Next() {
+					switch d.Val() {
+					case "quality":
+						if !d.NextArg() {
+							return d.ArgErr()
+						}
+						quality, err := strconv.Atoi(d.Val())
+						if err != nil || quality < 0 || quality > 100 {
+							return fmt.Errorf("invalid webp quality value: %s", d.Val())
+						}
+						p.WebpConfig.Quality = quality
+					case "lossless":
+						p.WebpConfig.Lossless = true
+					case "exact":
+						p.WebpConfig.Exact = true
+					default:
+						return d.ArgErr()
+					}
+				}
+			} else {
+				return d.ArgErr()
+			}
 		default:
-			return d.ArgErr()
+			if inBlock {
+				return d.ArgErr()
+			}
 		}
 	}
+
 	p.ConfigureCGO()
 
 	return nil

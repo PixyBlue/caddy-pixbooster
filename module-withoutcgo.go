@@ -8,13 +8,13 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
-	"image/webp"
 	"io"
 	"net/http"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/gen2brain/avif"
 	"github.com/gen2brain/jpegxl"
+	"golang.org/x/image/webp"
 )
 
 func (p *Pixbooster) Provision(ctx caddy.Context) error {
@@ -59,9 +59,9 @@ func (p *Pixbooster) ConvertImageToFormat(imgURL string, format ImgFormat) (io.R
 
 	switch format.extension {
 	case ".avif":
-		err = avif.Encode(buf, img)
+		err = avif.Encode(buf, img, p.AvifConfig)
 	case ".jxl":
-		err = jpegxl.Encode(buf, img)
+		err = jpegxl.Encode(buf, img, p.JxlConfig)
 	default:
 		return nil, fmt.Errorf("unsupported output image format: %s", format.extension)
 	}
