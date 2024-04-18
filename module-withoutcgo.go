@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"image/webp"
 	"io"
 	"net/http"
 
@@ -45,6 +46,8 @@ func (p *Pixbooster) ConvertImageToFormat(imgURL string, format ImgFormat) (io.R
 		img, decodeErr = jpeg.Decode(resp.Body)
 	case "image/png":
 		img, decodeErr = png.Decode(resp.Body)
+	case "image/webp":
+		img, decodeErr = webp.Decode(resp.Body)
 	default:
 		return nil, fmt.Errorf("unsupported input image format: %s", format.extension)
 	}
@@ -72,6 +75,4 @@ func (p *Pixbooster) ConvertImageToFormat(imgURL string, format ImgFormat) (io.R
 
 func (p *Pixbooster) ConfigureCGO() {
 	p.Nowebpoutput = false
-	p.Nowebpinput = false
-
 }
