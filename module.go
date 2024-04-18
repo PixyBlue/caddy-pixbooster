@@ -68,7 +68,7 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	p.logger.Debug("Pixbooster start")
 	p.rootURL = p.GetRootUrl(r)
 	if p.IsOptimizedUrl(r.URL.Path) {
-		p.logger.Sugar().DPanic(r.URL.Path)
+		p.logger.Sugar().Debug(r.URL.Path)
 		format := ImgFormat{}
 		for _, f := range p.destFormats {
 			if strings.HasSuffix(r.URL.Path, f.extension) {
