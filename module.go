@@ -2,11 +2,14 @@ package pixbooster
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,6 +39,7 @@ type Pixbooster struct {
 	logger       *zap.Logger
 	rootURL      string
 	imgSuffix    string
+	Storage      string
 	destFormats  []ImgFormat
 	srcFormats   []ImgFormat
 	Nowebpoutput bool
@@ -68,6 +72,15 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	p.logger.Debug("Pixbooster start")
 	p.rootURL = p.GetRootUrl(r)
 	if p.IsOptimizedUrl(r.URL.Path) {
+		optimizedFileName := filepath.Join(p.Storage, p.getOptimizedFileName(r.URL.Path))
+		if data, err := os.ReadFile(optimizedFileName); err == nil {
+			w.Write(data)
+			return nil
+		} else if !os.IsNotExist(err) {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return err
+		}
+
 		p.logger.Debug("Optimized image URL: " + r.URL.Path)
 		format := ImgFormat{}
 		for _, f := range p.destFormats {
@@ -99,11 +112,33 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 
 		w.Header().Set("Content-Type", format.mimeType)
 
+		data, err := io.ReadAll(imgStream)
+		if err != nil {
+			p.logger.Error("Error reading image data: " + err.Error())
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return nil
+		}
+
+		if _, err := w.Write(data); err != nil {
+			p.logger.Error("Error sending image data: " + err.Error())
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return nil
+		}
+
 		if _, err := io.Copy(w, imgStream); err != nil {
 			p.logger.Error("Error sending image data: " + err.Error())
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return nil
 		}
+
+		file, err := os.Create(optimizedFileName)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		_, err = file.Write(data)
+		return err
 	}
 
 	if next != nil {
@@ -451,11 +486,17 @@ func (p *Pixbooster) isInputFormatAllowed(filename string) bool {
 	}
 }
 
+func (p *Pixbooster) getOptimizedFileName(originalURL string) string {
+	hash := md5.Sum([]byte(originalURL))
+	return hex.EncodeToString(hash[:])
+}
+
 // UnmarshalCaddyfile implements caddyfile.Unmarshaler. Syntax:
 //
 //	pixbooster [nowebpoutput|noavif|nojxl|nojpg|nopng] {
 //		[nowebpoutput|noavif|nojxl|nojpg|nopng]
 //		quality <integer between 0 and 100>
+//		storage <directory> Path to the directory where to store generated picture files
 //		webp {
 //			quality <integer between 0 and 100>
 //			lossless
@@ -477,6 +518,15 @@ func (p *Pixbooster) isInputFormatAllowed(filename string) bool {
 // The 'lossless' and 'exact' flags are set to true if specified.
 // All directives are optional.
 func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	p.Storage = caddy.AppConfigDir() + "/pixbooster"
+	_, err := os.Stat(p.Storage)
+	if os.IsNotExist(err) {
+		err := os.MkdirAll(p.Storage, 0755)
+		if err != nil {
+			p.logger.Sugar().Warn("Error creating default storage directory:", err)
+		}
+	}
+
 	var inBlock bool
 	if d.NextBlock(0) {
 		inBlock = true
@@ -496,6 +546,19 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			p.Nojpeg = true
 		case "nopng":
 			p.Nopng = true
+		case "storage":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			storage := d.Val()
+			f, err := os.OpenFile(filepath.Join(storage, "test_write_file"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+			if err == nil {
+				p.Storage = storage
+				defer os.Remove(f.Name())
+			} else {
+				p.logger.Error("Configured storage unusable, fallback to default")
+				p.logger.Sugar().Error(err)
+			}
 		case "quality":
 			if !d.NextArg() {
 				return d.ArgErr()

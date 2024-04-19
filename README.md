@@ -10,9 +10,7 @@ This work is at its very early stages and should only be used for testing.
 Pixbooster does two things:
 
 1. it adds modern files format sources (WebP, AVIF and JXL) to the HTML,
-2. it serve those files by converting the orignal ones on the fly.
-
-The files created by Pixbooster are not and will not be saved, but rebuilt at each request. Pixbooster is designed to work with a [cache module](https://caddyserver.com/docs/modules/http.handlers.cache#github.com/caddyserver/cache-handler).
+2. it serve those files by converting the orignal ones on the fly, from saved files after.
 
 ### How `<img>` is handled
 
@@ -124,6 +122,7 @@ $ curl http://localhost:8080
 pixbooster [nowebpoutput|noavif|nojxl|nojpg|nopng] {
 	[nowebpoutput|noavif|nojxl|nojpg|nopng]
 	quality <integer between 0 and 100>
+    storage <path where to store optimized files>
 	webp {
 		quality <integer between 0 and 100>
 		lossless
