@@ -8,6 +8,7 @@ require (
 	github.com/gen2brain/avif v0.2.6
 	github.com/gen2brain/jpegxl v0.2.6
 	go.uber.org/zap v1.27.0
+	golang.org/x/image v0.15.0
 	golang.org/x/net v0.23.0
 )
 
@@ -100,7 +101,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/crypto v0.21.0 // indirect
 	golang.org/x/exp v0.0.0-20230310171629-522b1b587ee0 // indirect
-	golang.org/x/image v0.15.0 // indirect
 	golang.org/x/mod v0.11.0 // indirect
 	golang.org/x/sys v0.18.0 // indirect
 	golang.org/x/term v0.18.0 // indirect
