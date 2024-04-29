@@ -4,7 +4,7 @@ go 1.22.0
 
 require (
 	github.com/caddyserver/caddy/v2 v2.7.6
-	github.com/chai2010/webp v1.1.1
+	github.com/chai2010/webp v1.1.2-0.20240429094506-1cb30a31f08d
 	github.com/gen2brain/avif v0.2.6
 	github.com/gen2brain/jpegxl v0.2.6
 	go.uber.org/zap v1.27.0
