@@ -29,7 +29,7 @@ func (p *Pixbooster) Provision(ctx caddy.Context) error {
 	return nil
 }
 
-func (p *Pixbooster) ConvertImageToFormat(imgURL string, format ImgFormat) (io.Reader, error) {
+func (p *Pixbooster) convertImageToFormat(imgURL string, format ImgFormat) (io.Reader, error) {
 	resp, err := http.Get(imgURL)
 	if err != nil {
 		return nil, err
@@ -73,6 +73,6 @@ func (p *Pixbooster) ConvertImageToFormat(imgURL string, format ImgFormat) (io.R
 	return buf, nil
 }
 
-func (p *Pixbooster) ConfigureCGO() {
-	p.Nowebpoutput = false
+func (p *Pixbooster) configureCGO() {
+	p.nowebpoutput = false
 }

@@ -29,36 +29,36 @@ func init() {
 	httpcaddyfile.RegisterHandlerDirective("pixbooster", parseCaddyfile)
 }
 
-type ImgFormat struct {
+type imgFormat struct {
 	extension string
 	mimeType  string
 }
 
 type Pixbooster struct {
-	CGOEnabled   bool
+	cGOEnabled   bool
 	logger       *zap.Logger
 	rootURL      string
 	imgSuffix    string
-	Storage      string
-	destFormats  []ImgFormat
-	srcFormats   []ImgFormat
-	Nowebpoutput bool
-	Nowebpinput  bool
-	Noavif       bool
-	Nojxl        bool
-	Nojpeg       bool
-	Nopng        bool
+	storage      string
+	destFormats  []imgFormat
+	srcFormats   []imgFormat
+	nowebpoutput bool
+	nowebpinput  bool
+	noavif       bool
+	nojxl        bool
+	nojpeg       bool
+	nopng        bool
 
-	Quality    int
-	WebpConfig WebpConfig
-	AvifConfig avif.Options
-	JxlConfig  jpegxl.Options
+	quality    int
+	webpConfig webpConfig
+	avifConfig avif.Options
+	jxlConfig  jpegxl.Options
 }
 
-type WebpConfig struct {
-	Quality  int
-	Lossless bool
-	Exact    bool
+type webpConfig struct {
+	quality  int
+	lossless bool
+	exact    bool
 }
 
 func (Pixbooster) CaddyModule() caddy.ModuleInfo {
@@ -70,19 +70,20 @@ func (Pixbooster) CaddyModule() caddy.ModuleInfo {
 
 func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	p.logger.Debug("Pixbooster start")
-	p.rootURL = p.GetRootUrl(r)
-	if p.IsOptimizedUrl(r.URL.Path) {
-		optimizedFileName := filepath.Join(p.Storage, p.getOptimizedFileName(r.URL.Path))
+	p.rootURL = p.getRootUrl(r)
+	if p.isOptimizedUrl(r.URL.Path) {
+		optimizedFileName := filepath.Join(p.storage, p.getOptimizedFileName(r.URL.Path))
 		if data, err := os.ReadFile(optimizedFileName); err == nil {
 			w.Write(data)
 			return nil
 		} else if !os.IsNotExist(err) {
+			p.logger.Error("Unable to access Pixbooster storage")
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return err
 		}
 
 		p.logger.Debug("Optimized image URL: " + r.URL.Path)
-		format := ImgFormat{}
+		format := imgFormat{}
 		for _, f := range p.destFormats {
 			if strings.HasSuffix(r.URL.Path, f.extension) {
 				format = f
@@ -100,9 +101,9 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			return nil
 		}
 
-		originalImageUrl := p.GetOriginalImageURL(p.rootURL + r.RequestURI)
+		originalImageUrl := p.getOriginalImageURL(p.rootURL + r.RequestURI)
 		p.logger.Debug("Original image URL: " + originalImageUrl)
-		imgStream, err := p.ConvertImageToFormat(originalImageUrl, format)
+		imgStream, err := p.convertImageToFormat(originalImageUrl, format)
 		if err != nil {
 			p.logger.Error("Error converting image to format: " + format.extension)
 			p.logger.Sugar().Error(err)
@@ -158,15 +159,15 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 				return err
 			}
 
-			pictures := p.CollectPictures(doc, []*html.Node{})
-			imgs := p.CollectImgs(doc, []*html.Node{})
+			pictures := p.collectPictures(doc, []*html.Node{})
+			imgs := p.collectImgs(doc, []*html.Node{})
 
 			for _, img := range imgs {
-				p.WrapImgWithPicture(img)
+				p.wrapImgWithPicture(img)
 			}
 
 			for _, picture := range pictures {
-				p.AddSourcesToPicture(picture, false)
+				p.addSourcesToPicture(picture)
 			}
 
 			var result bytes.Buffer
@@ -199,7 +200,7 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	return nil
 }
 
-func (p *Pixbooster) GetRootUrl(r *http.Request) string {
+func (p *Pixbooster) getRootUrl(r *http.Request) string {
 	var proto string
 	if r.TLS == nil {
 		proto = "http://"
@@ -213,7 +214,7 @@ func (p *Pixbooster) GetRootUrl(r *http.Request) string {
 	return proto + r.Host + port
 }
 
-func (p *Pixbooster) IsSameSite(imageURL string) bool {
+func (p *Pixbooster) isSameSite(imageURL string) bool {
 	if !strings.HasPrefix(imageURL, "http://") && !strings.HasPrefix(imageURL, "https://") {
 		return true
 	}
@@ -227,9 +228,9 @@ func (p *Pixbooster) IsSameSite(imageURL string) bool {
 	return imageURLParsed.Host == p.rootURL
 }
 
-func (p *Pixbooster) CollectImgs(n *html.Node, imgs []*html.Node) []*html.Node {
-	if n.Type == html.ElementNode && n.Data == "img" && p.IsSameSite(p.GetAttr(n, "src")) && !p.HasAttr(n, "data-pixbooster-ignore") && !p.IsImageInsidePicture(n) {
-		src := p.GetAttr(n, "src")
+func (p *Pixbooster) collectImgs(n *html.Node, imgs []*html.Node) []*html.Node {
+	if n.Type == html.ElementNode && n.Data == "img" && p.isSameSite(p.getAttr(n, "src")) && !p.hasAttr(n, "data-pixbooster-ignore") && !p.isImageInsidePicture(n) {
+		src := p.getAttr(n, "src")
 		ext := filepath.Ext(src)
 		mimeType := mime.TypeByExtension(ext)
 		p.logger.Debug(mimeType)
@@ -242,22 +243,22 @@ func (p *Pixbooster) CollectImgs(n *html.Node, imgs []*html.Node) []*html.Node {
 	}
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		imgs = p.CollectImgs(c, imgs)
+		imgs = p.collectImgs(c, imgs)
 	}
 	return imgs
 }
 
-func (p *Pixbooster) CollectPictures(n *html.Node, pictures []*html.Node) []*html.Node {
-	if n.Type == html.ElementNode && n.Data == "picture" && !p.HasAttr(n, "data-pixbooster-ignore") {
+func (p *Pixbooster) collectPictures(n *html.Node, pictures []*html.Node) []*html.Node {
+	if n.Type == html.ElementNode && n.Data == "picture" && !p.hasAttr(n, "data-pixbooster-ignore") {
 		pictures = append(pictures, n)
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		pictures = p.CollectPictures(c, pictures)
+		pictures = p.collectPictures(c, pictures)
 	}
 	return pictures
 }
 
-func (p *Pixbooster) HasAttr(n *html.Node, name string) bool {
+func (p *Pixbooster) hasAttr(n *html.Node, name string) bool {
 	for _, attr := range n.Attr {
 		if attr.Key == name {
 			return true
@@ -266,7 +267,7 @@ func (p *Pixbooster) HasAttr(n *html.Node, name string) bool {
 	return false
 }
 
-func (p *Pixbooster) IsImageInsidePicture(img *html.Node) bool {
+func (p *Pixbooster) isImageInsidePicture(img *html.Node) bool {
 	for parent := img.Parent; parent != nil; parent = parent.Parent {
 		if parent.Type == html.ElementNode && parent.Data == "picture" {
 			return true
@@ -275,7 +276,7 @@ func (p *Pixbooster) IsImageInsidePicture(img *html.Node) bool {
 	return false
 }
 
-func (p *Pixbooster) GetAttr(n *html.Node, attribute string) string {
+func (p *Pixbooster) getAttr(n *html.Node, attribute string) string {
 	for _, attr := range n.Attr {
 		if attr.Key == attribute {
 			return attr.Val
@@ -284,7 +285,7 @@ func (p *Pixbooster) GetAttr(n *html.Node, attribute string) string {
 	return ""
 }
 
-func (p *Pixbooster) WrapImgWithPicture(n *html.Node) {
+func (p *Pixbooster) wrapImgWithPicture(n *html.Node) {
 	picture := &html.Node{
 		Type: html.ElementNode,
 		Data: "picture",
@@ -304,10 +305,10 @@ func (p *Pixbooster) WrapImgWithPicture(n *html.Node) {
 	picture.AppendChild(img)
 	n.Parent.InsertBefore(picture, n)
 	n.Parent.RemoveChild(n)
-	p.AddSourcesToPicture(picture, false)
+	p.addSourcesToPicture(picture)
 }
 
-func (p *Pixbooster) AddSourcesToPicture(picture *html.Node, copyAttr bool) {
+func (p *Pixbooster) addSourcesToPicture(picture *html.Node) {
 	if picture.Data != "picture" {
 		return
 	}
@@ -330,30 +331,30 @@ func (p *Pixbooster) AddSourcesToPicture(picture *html.Node, copyAttr bool) {
 	}
 
 	for _, source := range sources {
-		p.AddSourcesToSource(source, copyAttr)
+		p.addSourcesToSource(source)
 	}
 }
 
-func (p *Pixbooster) AddSourcesToSource(source *html.Node, copyAttr bool) {
-	if p.HasAttr(source, "srcset") {
+func (p *Pixbooster) addSourcesToSource(source *html.Node) {
+	if p.hasAttr(source, "srcset") {
 		for _, format := range p.destFormats {
 			if p.isOutputFormatAllowed(format) {
-				p.AddSourceNode(source, p.GetOptimizedSrcset(p.GetAttr(source, "srcset"), format), format.mimeType, source.Data == "source")
+				p.addSourceNode(source, p.getOptimizedSrcset(p.getAttr(source, "srcset"), format), format.mimeType, source.Data == "source")
 			}
 		}
 	}
 
-	src := p.GetAttr(source, "src")
-	if source.Data == "img" && src != "" && p.IsSameSite(src) && p.isInputFormatAllowed(src) {
+	src := p.getAttr(source, "src")
+	if source.Data == "img" && src != "" && p.isSameSite(src) && p.isInputFormatAllowed(src) {
 		for _, format := range p.destFormats {
 			if p.isOutputFormatAllowed(format) {
-				p.AddSourceNode(source, p.GetOptimizedImageURL(src, format), format.mimeType, false)
+				p.addSourceNode(source, p.getOptimizedImageURL(src, format), format.mimeType, false)
 			}
 		}
 	}
 }
 
-func (p *Pixbooster) GetOptimizedSrcset(srcset string, format ImgFormat) string {
+func (p *Pixbooster) getOptimizedSrcset(srcset string, format imgFormat) string {
 	srcsetParts := strings.Split(srcset, ",")
 
 	for i, part := range srcsetParts {
@@ -361,8 +362,8 @@ func (p *Pixbooster) GetOptimizedSrcset(srcset string, format ImgFormat) string 
 		subParts := strings.Fields(part)
 
 		for j, subPart := range subParts {
-			if p.isInputFormatAllowed(subPart) && p.IsSameSite(subPart) {
-				subParts[j] = p.GetOptimizedImageURL(subPart, format)
+			if p.isInputFormatAllowed(subPart) && p.isSameSite(subPart) {
+				subParts[j] = p.getOptimizedImageURL(subPart, format)
 			}
 		}
 
@@ -372,7 +373,7 @@ func (p *Pixbooster) GetOptimizedSrcset(srcset string, format ImgFormat) string 
 	return strings.Join(srcsetParts, ",")
 }
 
-func (p *Pixbooster) AddSourceNode(n *html.Node, srcset string, mimeType string, copyAttr bool) {
+func (p *Pixbooster) addSourceNode(n *html.Node, srcset string, mimeType string, copyAttr bool) {
 	newSource := &html.Node{
 		Type: html.ElementNode,
 		Data: "source",
@@ -400,7 +401,7 @@ func (p *Pixbooster) AddSourceNode(n *html.Node, srcset string, mimeType string,
 	n.Parent.InsertBefore(newSource, n)
 }
 
-func (p *Pixbooster) GetOptimizedImageURL(originalURL string, format ImgFormat) string {
+func (p *Pixbooster) getOptimizedImageURL(originalURL string, format imgFormat) string {
 	parsedURL, err := url.Parse(originalURL)
 	if err != nil {
 		p.logger.Sugar().Fatalf("Error parsing URL: %v", err)
@@ -413,7 +414,7 @@ func (p *Pixbooster) GetOptimizedImageURL(originalURL string, format ImgFormat) 
 	return parsedURL.String()
 }
 
-func (p *Pixbooster) GetOriginalImageURL(optimizedURL string) string {
+func (p *Pixbooster) getOriginalImageURL(optimizedURL string) string {
 
 	pathParts := strings.Split(optimizedURL, ".")
 	pixboosterIndex := -1
@@ -432,7 +433,7 @@ func (p *Pixbooster) GetOriginalImageURL(optimizedURL string) string {
 	return strings.Join(pathParts[:pixboosterIndex], ".")
 }
 
-func (p *Pixbooster) IsOptimizedUrl(myurl string) bool {
+func (p *Pixbooster) isOptimizedUrl(myurl string) bool {
 	parsedURL, err := url.Parse(myurl)
 	if err != nil {
 		p.logger.Sugar().Errorf("Error parsing URL: %v", err)
@@ -452,21 +453,21 @@ func (p *Pixbooster) IsOptimizedUrl(myurl string) bool {
 	return pixboosterIndex != -1
 }
 
-func (p *Pixbooster) isOutputFormatAllowed(format ImgFormat) bool {
+func (p *Pixbooster) isOutputFormatAllowed(format imgFormat) bool {
 	switch format.extension {
 	case ".webp":
-		return !p.Nowebpoutput
+		return !p.nowebpoutput
 	case ".avif":
-		return !p.Noavif
+		return !p.noavif
 	case ".jxl":
-		return !p.Nojxl
+		return !p.nojxl
 	default:
 		return false
 	}
 }
 
 func (p *Pixbooster) isInputFormatAllowed(filename string) bool {
-	var format ImgFormat
+	var format imgFormat
 	mimeType := mime.TypeByExtension(filepath.Ext(filename))
 	for _, f := range p.srcFormats {
 		if f.mimeType == mimeType {
@@ -476,11 +477,11 @@ func (p *Pixbooster) isInputFormatAllowed(filename string) bool {
 
 	switch format.extension {
 	case ".jpg":
-		return !p.Nojpeg
+		return !p.nojpeg
 	case ".png":
-		return !p.Nopng
+		return !p.nopng
 	case ".webp":
-		return !p.Nowebpinput
+		return !p.nowebpinput
 	default:
 		return false
 	}
@@ -518,10 +519,10 @@ func (p *Pixbooster) getOptimizedFileName(originalURL string) string {
 // The 'lossless' and 'exact' flags are set to true if specified.
 // All directives are optional.
 func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	p.Storage = caddy.AppConfigDir() + "/pixbooster"
-	_, err := os.Stat(p.Storage)
+	p.storage = caddy.AppConfigDir() + "/pixbooster"
+	_, err := os.Stat(p.storage)
 	if os.IsNotExist(err) {
-		err := os.MkdirAll(p.Storage, 0755)
+		err := os.MkdirAll(p.storage, 0755)
 		if err != nil {
 			p.logger.Sugar().Warn("Error creating default storage directory:", err)
 		}
@@ -535,17 +536,17 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
 		switch d.Val() {
 		case "nowebpoutput":
-			p.Nowebpoutput = true
+			p.nowebpoutput = true
 		case "nowebpinput":
-			p.Nowebpinput = true
+			p.nowebpinput = true
 		case "noavif":
-			p.Noavif = true
+			p.noavif = true
 		case "nojxl":
-			p.Nojxl = true
+			p.nojxl = true
 		case "nojpeg":
-			p.Nojpeg = true
+			p.nojpeg = true
 		case "nopng":
-			p.Nopng = true
+			p.nopng = true
 		case "storage":
 			if !d.NextArg() {
 				return d.ArgErr()
@@ -553,7 +554,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			storage := d.Val()
 			f, err := os.OpenFile(filepath.Join(storage, "test_write_file"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 			if err == nil {
-				p.Storage = storage
+				p.storage = storage
 				defer os.Remove(f.Name())
 			} else {
 				p.logger.Error("Configured storage unusable, fallback to default")
@@ -567,10 +568,10 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			if err != nil || quality < 0 || quality > 100 {
 				return fmt.Errorf("invalid quality value: %s", d.Val())
 			}
-			p.Quality = quality
+			p.quality = quality
 		case "avif":
 			if inBlock && d.NextBlock(0) {
-				p.AvifConfig = avif.Options{Quality: p.Quality}
+				p.avifConfig = avif.Options{Quality: p.quality}
 				for d.Next() {
 					switch d.Val() {
 					case "quality":
@@ -581,7 +582,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 						if err != nil || quality < 0 || quality > 100 {
 							return fmt.Errorf("invalid avif quality value: %s", d.Val())
 						}
-						p.AvifConfig.Quality = quality
+						p.avifConfig.Quality = quality
 					case "qualityalpha":
 						if !d.NextArg() {
 							return d.ArgErr()
@@ -590,7 +591,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 						if err != nil || qualityAlpha < 0 || qualityAlpha > 100 {
 							return fmt.Errorf("invalid avif qualityalpha value: %s", d.Val())
 						}
-						p.AvifConfig.QualityAlpha = qualityAlpha
+						p.avifConfig.QualityAlpha = qualityAlpha
 					case "speed":
 						if !d.NextArg() {
 							return d.ArgErr()
@@ -599,17 +600,17 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 						if err != nil || speed < 0 || speed > 10 {
 							return fmt.Errorf("invalid avif speed value: %s", d.Val())
 						}
-						p.AvifConfig.Speed = speed
+						p.avifConfig.Speed = speed
 					default:
 						return d.ArgErr()
 					}
 				}
 			} else {
-				p.AvifConfig = avif.Options{Quality: p.Quality}
+				p.avifConfig = avif.Options{Quality: p.quality}
 			}
 		case "jxl":
 			if inBlock && d.NextBlock(0) {
-				p.JxlConfig = jpegxl.Options{Quality: p.Quality}
+				p.jxlConfig = jpegxl.Options{Quality: p.quality}
 				for d.Next() {
 					switch d.Val() {
 					case "quality":
@@ -620,7 +621,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 						if err != nil || quality < 0 || quality > 100 {
 							return fmt.Errorf("invalid jxl quality value: %s", d.Val())
 						}
-						p.JxlConfig.Quality = quality
+						p.jxlConfig.Quality = quality
 					case "effort":
 						if !d.NextArg() {
 							return d.ArgErr()
@@ -629,7 +630,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 						if err != nil || effort < 0 || effort > 10 {
 							return fmt.Errorf("invalid jxl effort value: %s", d.Val())
 						}
-						p.JxlConfig.Effort = effort
+						p.jxlConfig.Effort = effort
 					default:
 						return d.ArgErr()
 					}
@@ -639,7 +640,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			}
 		case "webp":
 			if inBlock && d.NextBlock(0) {
-				p.WebpConfig = WebpConfig{Quality: p.Quality}
+				p.webpConfig = webpConfig{quality: p.quality}
 				for d.Next() {
 					switch d.Val() {
 					case "quality":
@@ -650,11 +651,11 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 						if err != nil || quality < 0 || quality > 100 {
 							return fmt.Errorf("invalid webp quality value: %s", d.Val())
 						}
-						p.WebpConfig.Quality = quality
+						p.webpConfig.quality = quality
 					case "lossless":
-						p.WebpConfig.Lossless = true
+						p.webpConfig.lossless = true
 					case "exact":
-						p.WebpConfig.Exact = true
+						p.webpConfig.exact = true
 					default:
 						return d.ArgErr()
 					}
@@ -669,7 +670,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		}
 	}
 
-	p.ConfigureCGO()
+	p.configureCGO()
 
 	return nil
 }
