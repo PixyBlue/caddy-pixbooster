@@ -18,18 +18,18 @@ import (
 )
 
 func (p *Pixbooster) Provision(ctx caddy.Context) error {
-	p.CGOEnabled = false
+	p.cGOEnabled = false
 	p.logger = ctx.Logger(p)
 	p.imgSuffix = "pixbooster"
-	p.destFormats = append(p.destFormats, ImgFormat{extension: ".jxl", mimeType: "image/jxl"})
-	p.destFormats = append(p.destFormats, ImgFormat{extension: ".avif", mimeType: "image/avif"})
-	p.srcFormats = append(p.srcFormats, ImgFormat{extension: ".jpg", mimeType: "image/jpeg"})
-	p.srcFormats = append(p.srcFormats, ImgFormat{extension: ".png", mimeType: "image/png"})
+	p.destFormats = append(p.destFormats, imgFormat{extension: ".jxl", mimeType: "image/jxl"})
+	p.destFormats = append(p.destFormats, imgFormat{extension: ".avif", mimeType: "image/avif"})
+	p.srcFormats = append(p.srcFormats, imgFormat{extension: ".jpg", mimeType: "image/jpeg"})
+	p.srcFormats = append(p.srcFormats, imgFormat{extension: ".png", mimeType: "image/png"})
 
 	return nil
 }
 
-func (p *Pixbooster) convertImageToFormat(imgURL string, format ImgFormat) (io.Reader, error) {
+func (p *Pixbooster) convertImageToFormat(imgURL string, format imgFormat) (io.Reader, error) {
 	resp, err := http.Get(imgURL)
 	if err != nil {
 		return nil, err
@@ -59,9 +59,9 @@ func (p *Pixbooster) convertImageToFormat(imgURL string, format ImgFormat) (io.R
 
 	switch format.extension {
 	case ".avif":
-		err = avif.Encode(buf, img, p.AvifConfig)
+		err = avif.Encode(buf, img, p.avifConfig)
 	case ".jxl":
-		err = jpegxl.Encode(buf, img, p.JxlConfig)
+		err = jpegxl.Encode(buf, img, p.jxlConfig)
 	default:
 		return nil, fmt.Errorf("unsupported output image format: %s", format.extension)
 	}
