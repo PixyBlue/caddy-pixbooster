@@ -34,7 +34,7 @@ type imgFormat struct {
 	mimeType  string
 }
 
-// Caddy Pixbooster allow your server to provide pictures in modern file formats(webp, avif, jxl) on the fly without requiring you to change your html.
+// Caddy Pixbooster allows your server to provide pictures in modern file formats(webp, avif, jxl) on the fly without requiring you to change your html.
 type Pixbooster struct {
 	cGOEnabled  bool
 	logger      *zap.Logger
