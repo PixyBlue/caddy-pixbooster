@@ -34,29 +34,43 @@ type imgFormat struct {
 	mimeType  string
 }
 
+// Caddy Pixbooster allow your server to provide pictures in modern file formats(webp, avif, jxl) on the fly without requiring you to change your html.
 type Pixbooster struct {
-	CGOEnabled   bool
-	logger       *zap.Logger
-	rootURL      string
-	imgSuffix    string
-	Storage      string
-	destFormats  []imgFormat
-	srcFormats   []imgFormat
+	cGOEnabled  bool
+	logger      *zap.Logger
+	rootURL     string
+	imgSuffix   string
+	destFormats []imgFormat
+	srcFormats  []imgFormat
+	// Path where to store the modern image files. Optional.
+	Storage string
+	// Disable Webp output if present.
 	Nowebpoutput bool
-	Nowebpinput  bool
-	Noavif       bool
-	Nojxl        bool
-	Nojpeg       bool
-	Nopng        bool
+	// Disable treatment of Webp files in the incomming HTML if present.
+	Nowebpinput bool
+	// Disable Avif output  if present.
+	Noavif bool
+	// Disable JXL output if present.
+	Nojxl bool
+	// Disable treatment of JPEG files in the incomming HTML if present.
+	Nojpeg bool
+	// Disable treatment of PNG files in the incomming HTML if present.
+	Nopng bool
 
-	Quality    int
+	// Quality of output pictures, a integer between 0 and 100. Optional.
+	Quality int
+	// Set specific Webp ouput options.
 	WebpConfig WebpConfig
+	// Set specific Avif ouput options.
 	AvifConfig avif.Options
-	JxlConfig  jpegxl.Options
+	// Set specific JXL ouput options.
+	JxlConfig jpegxl.Options
 }
 
 type WebpConfig struct {
-	Quality  int
+	// Quality of output pictures, a integer between 0 and 100. Optional.
+	Quality int
+	// Enable lossless quality compression if present.
 	Lossless bool
 	Exact    bool
 }

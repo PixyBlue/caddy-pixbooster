@@ -18,7 +18,7 @@ import (
 )
 
 func (p *Pixbooster) Provision(ctx caddy.Context) error {
-	p.CGOEnabled = true
+	p.cGOEnabled = true
 	p.logger = ctx.Logger(p)
 	p.imgSuffix = "pixbooster"
 	p.destFormats = append(p.destFormats, imgFormat{extension: ".jxl", mimeType: "image/jxl"})
