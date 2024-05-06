@@ -8,7 +8,7 @@ require (
 	github.com/gen2brain/avif v0.2.6
 	github.com/gen2brain/jpegxl v0.2.6
 	go.uber.org/zap v1.27.0
-	golang.org/x/image v0.15.0
+	golang.org/x/image v0.16.0
 	golang.org/x/net v0.23.0
 )
 
@@ -104,7 +104,7 @@ require (
 	golang.org/x/mod v0.11.0 // indirect
 	golang.org/x/sys v0.18.0 // indirect
 	golang.org/x/term v0.18.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/text v0.15.0 // indirect
 	golang.org/x/tools v0.10.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20231016165738-49dd2c1f3d0b // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20231016165738-49dd2c1f3d0b // indirect
