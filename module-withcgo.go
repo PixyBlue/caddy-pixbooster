@@ -18,7 +18,7 @@ import (
 )
 
 func (p *Pixbooster) Provision(ctx caddy.Context) error {
-	p.cGOEnabled = true
+	p.CGOEnabled = true
 	p.logger = ctx.Logger(p)
 	p.imgSuffix = "pixbooster"
 	p.destFormats = append(p.destFormats, imgFormat{extension: ".jxl", mimeType: "image/jxl"})
@@ -61,11 +61,11 @@ func (p *Pixbooster) convertImageToFormat(imgURL string, format imgFormat) (io.R
 
 	switch format.extension {
 	case ".webp":
-		err = webp.Encode(buf, img, &webp.Options{Quality: float32(p.webpConfig.quality), Lossless: p.webpConfig.lossless, Exact: p.webpConfig.exact})
+		err = webp.Encode(buf, img, &webp.Options{Quality: float32(p.WebpConfig.Quality), Lossless: p.WebpConfig.Lossless, Exact: p.WebpConfig.Exact})
 	case ".avif":
-		err = avif.Encode(buf, img, p.avifConfig)
+		err = avif.Encode(buf, img, p.AvifConfig)
 	case ".jxl":
-		err = jpegxl.Encode(buf, img, p.jxlConfig)
+		err = jpegxl.Encode(buf, img, p.JxlConfig)
 	default:
 		return nil, fmt.Errorf("unsupported output image format: %s", format.extension)
 	}
