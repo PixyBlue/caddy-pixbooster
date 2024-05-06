@@ -59,9 +59,9 @@ func (p *Pixbooster) convertImageToFormat(imgURL string, format imgFormat) (io.R
 
 	switch format.extension {
 	case ".avif":
-		err = avif.Encode(buf, img, p.avifConfig)
+		err = avif.Encode(buf, img, p.AvifConfig)
 	case ".jxl":
-		err = jpegxl.Encode(buf, img, p.jxlConfig)
+		err = jpegxl.Encode(buf, img, p.JxlConfig)
 	default:
 		return nil, fmt.Errorf("unsupported output image format: %s", format.extension)
 	}
@@ -74,5 +74,5 @@ func (p *Pixbooster) convertImageToFormat(imgURL string, format imgFormat) (io.R
 }
 
 func (p *Pixbooster) configureCGO() {
-	p.nowebpoutput = false
+	p.Nowebpoutput = false
 }

@@ -34,31 +34,45 @@ type imgFormat struct {
 	mimeType  string
 }
 
+// Caddy Pixbooster allow your server to provide pictures in modern file formats(webp, avif, jxl) on the fly without requiring you to change your html.
 type Pixbooster struct {
-	cGOEnabled   bool
-	logger       *zap.Logger
-	rootURL      string
-	imgSuffix    string
-	storage      string
-	destFormats  []imgFormat
-	srcFormats   []imgFormat
-	nowebpoutput bool
-	nowebpinput  bool
-	noavif       bool
-	nojxl        bool
-	nojpeg       bool
-	nopng        bool
+	cGOEnabled  bool
+	logger      *zap.Logger
+	rootURL     string
+	imgSuffix   string
+	destFormats []imgFormat
+	srcFormats  []imgFormat
+	// Path where to store the modern image files. Optional.
+	Storage string
+	// Disable Webp output if present.
+	Nowebpoutput bool
+	// Disable treatment of Webp files in the incomming HTML if present.
+	Nowebpinput bool
+	// Disable Avif output  if present.
+	Noavif bool
+	// Disable JXL output if present.
+	Nojxl bool
+	// Disable treatment of JPEG files in the incomming HTML if present.
+	Nojpeg bool
+	// Disable treatment of PNG files in the incomming HTML if present.
+	Nopng bool
 
-	quality    int
-	webpConfig webpConfig
-	avifConfig avif.Options
-	jxlConfig  jpegxl.Options
+	// Quality of output pictures, a integer between 0 and 100. Optional.
+	Quality int
+	// Set specific Webp ouput options.
+	WebpConfig WebpConfig
+	// Set specific Avif ouput options.
+	AvifConfig avif.Options
+	// Set specific JXL ouput options.
+	JxlConfig jpegxl.Options
 }
 
-type webpConfig struct {
-	quality  int
-	lossless bool
-	exact    bool
+type WebpConfig struct {
+	// Quality of output pictures, a integer between 0 and 100. Optional.
+	Quality int
+	// Enable lossless quality compression if present.
+	Lossless bool
+	Exact    bool
 }
 
 func (Pixbooster) CaddyModule() caddy.ModuleInfo {
@@ -72,7 +86,7 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	p.logger.Debug("Pixbooster start")
 	p.rootURL = p.getRootUrl(r)
 	if p.isOptimizedUrl(r.URL.Path) {
-		optimizedFileName := filepath.Join(p.storage, p.getOptimizedFileName(r.URL.Path))
+		optimizedFileName := filepath.Join(p.Storage, p.getOptimizedFileName(r.URL.Path))
 		if data, err := os.ReadFile(optimizedFileName); err == nil {
 			w.Write(data)
 			return nil
@@ -456,11 +470,11 @@ func (p *Pixbooster) isOptimizedUrl(myurl string) bool {
 func (p *Pixbooster) isOutputFormatAllowed(format imgFormat) bool {
 	switch format.extension {
 	case ".webp":
-		return !p.nowebpoutput
+		return !p.Nowebpoutput
 	case ".avif":
-		return !p.noavif
+		return !p.Noavif
 	case ".jxl":
-		return !p.nojxl
+		return !p.Nojxl
 	default:
 		return false
 	}
@@ -477,11 +491,11 @@ func (p *Pixbooster) isInputFormatAllowed(filename string) bool {
 
 	switch format.extension {
 	case ".jpg":
-		return !p.nojpeg
+		return !p.Nojpeg
 	case ".png":
-		return !p.nopng
+		return !p.Nopng
 	case ".webp":
-		return !p.nowebpinput
+		return !p.Nowebpinput
 	default:
 		return false
 	}
@@ -519,10 +533,10 @@ func (p *Pixbooster) getOptimizedFileName(originalURL string) string {
 // The 'lossless' and 'exact' flags are set to true if specified.
 // All directives are optional.
 func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	p.storage = caddy.AppConfigDir() + "/pixbooster"
-	_, err := os.Stat(p.storage)
+	p.Storage = caddy.AppConfigDir() + "/pixbooster"
+	_, err := os.Stat(p.Storage)
 	if os.IsNotExist(err) {
-		err := os.MkdirAll(p.storage, 0755)
+		err := os.MkdirAll(p.Storage, 0755)
 		if err != nil {
 			p.logger.Sugar().Warn("Error creating default storage directory:", err)
 		}
@@ -536,17 +550,17 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
 		switch d.Val() {
 		case "nowebpoutput":
-			p.nowebpoutput = true
+			p.Nowebpoutput = true
 		case "nowebpinput":
-			p.nowebpinput = true
+			p.Nowebpinput = true
 		case "noavif":
-			p.noavif = true
+			p.Noavif = true
 		case "nojxl":
-			p.nojxl = true
+			p.Nojxl = true
 		case "nojpeg":
-			p.nojpeg = true
+			p.Nojpeg = true
 		case "nopng":
-			p.nopng = true
+			p.Nopng = true
 		case "storage":
 			if !d.NextArg() {
 				return d.ArgErr()
@@ -554,7 +568,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			storage := d.Val()
 			f, err := os.OpenFile(filepath.Join(storage, "test_write_file"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 			if err == nil {
-				p.storage = storage
+				p.Storage = storage
 				defer os.Remove(f.Name())
 			} else {
 				p.logger.Error("Configured storage unusable, fallback to default")
@@ -568,10 +582,10 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			if err != nil || quality < 0 || quality > 100 {
 				return fmt.Errorf("invalid quality value: %s", d.Val())
 			}
-			p.quality = quality
+			p.Quality = quality
 		case "avif":
 			if inBlock && d.NextBlock(0) {
-				p.avifConfig = avif.Options{Quality: p.quality}
+				p.AvifConfig = avif.Options{Quality: p.Quality}
 				for d.Next() {
 					switch d.Val() {
 					case "quality":
@@ -582,7 +596,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 						if err != nil || quality < 0 || quality > 100 {
 							return fmt.Errorf("invalid avif quality value: %s", d.Val())
 						}
-						p.avifConfig.Quality = quality
+						p.AvifConfig.Quality = quality
 					case "qualityalpha":
 						if !d.NextArg() {
 							return d.ArgErr()
@@ -591,7 +605,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 						if err != nil || qualityAlpha < 0 || qualityAlpha > 100 {
 							return fmt.Errorf("invalid avif qualityalpha value: %s", d.Val())
 						}
-						p.avifConfig.QualityAlpha = qualityAlpha
+						p.AvifConfig.QualityAlpha = qualityAlpha
 					case "speed":
 						if !d.NextArg() {
 							return d.ArgErr()
@@ -600,17 +614,17 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 						if err != nil || speed < 0 || speed > 10 {
 							return fmt.Errorf("invalid avif speed value: %s", d.Val())
 						}
-						p.avifConfig.Speed = speed
+						p.AvifConfig.Speed = speed
 					default:
 						return d.ArgErr()
 					}
 				}
 			} else {
-				p.avifConfig = avif.Options{Quality: p.quality}
+				p.AvifConfig = avif.Options{Quality: p.Quality}
 			}
 		case "jxl":
 			if inBlock && d.NextBlock(0) {
-				p.jxlConfig = jpegxl.Options{Quality: p.quality}
+				p.JxlConfig = jpegxl.Options{Quality: p.Quality}
 				for d.Next() {
 					switch d.Val() {
 					case "quality":
@@ -621,7 +635,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 						if err != nil || quality < 0 || quality > 100 {
 							return fmt.Errorf("invalid jxl quality value: %s", d.Val())
 						}
-						p.jxlConfig.Quality = quality
+						p.JxlConfig.Quality = quality
 					case "effort":
 						if !d.NextArg() {
 							return d.ArgErr()
@@ -630,7 +644,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 						if err != nil || effort < 0 || effort > 10 {
 							return fmt.Errorf("invalid jxl effort value: %s", d.Val())
 						}
-						p.jxlConfig.Effort = effort
+						p.JxlConfig.Effort = effort
 					default:
 						return d.ArgErr()
 					}
@@ -640,7 +654,7 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			}
 		case "webp":
 			if inBlock && d.NextBlock(0) {
-				p.webpConfig = webpConfig{quality: p.quality}
+				p.WebpConfig = WebpConfig{Quality: p.Quality}
 				for d.Next() {
 					switch d.Val() {
 					case "quality":
@@ -651,11 +665,11 @@ func (p *Pixbooster) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 						if err != nil || quality < 0 || quality > 100 {
 							return fmt.Errorf("invalid webp quality value: %s", d.Val())
 						}
-						p.webpConfig.quality = quality
+						p.WebpConfig.Quality = quality
 					case "lossless":
-						p.webpConfig.lossless = true
+						p.WebpConfig.Lossless = true
 					case "exact":
-						p.webpConfig.exact = true
+						p.WebpConfig.Exact = true
 					default:
 						return d.ArgErr()
 					}
