@@ -34,7 +34,7 @@ type imgFormat struct {
 	mimeType  string
 }
 
-// Caddy Pixbooster allows your server to provide pictures in modern file formats (webp, avif, jxl) on the fly without requiring you to change your html.
+// Pixbooster allows your server to provide pictures in modern file formats (webp, avif, jxl) on the fly without requiring you to change your html.
 type Pixbooster struct {
 	cGOEnabled  bool
 	logger      *zap.Logger
@@ -43,36 +43,36 @@ type Pixbooster struct {
 	destFormats []imgFormat
 	srcFormats  []imgFormat
 	// Path where to store the modern image files. Optional.
-	Storage string
+	Storage string `json:"storage,omitempty"`
 	// Disable Webp output if present.
-	Nowebpoutput bool
+	Nowebpoutput bool `json:"nowebpoutput,omitempty"`
 	// Disable treatment of Webp files in the incomming HTML if present.
-	Nowebpinput bool
+	Nowebpinput bool `json:"nowebpinput,omitempty"`
 	// Disable Avif output  if present.
-	Noavif bool
+	Noavif bool `json:"noavif,omitempty"`
 	// Disable JXL output if present.
-	Nojxl bool
+	Nojxl bool `json:"nojxl,omitempty"`
 	// Disable treatment of JPEG files in the incomming HTML if present.
-	Nojpeg bool
+	Nojpeg bool `json:"nojpeg,omitempty"`
 	// Disable treatment of PNG files in the incomming HTML if present.
-	Nopng bool
+	Nopng bool `json:"nopng,omitempty"`
 
 	// Quality of output pictures, a integer between 0 and 100. Optional.
-	Quality int
+	Quality int `json:"quality,omitempty"`
 	// Set specific Webp ouput options.
-	WebpConfig WebpConfig
+	WebpConfig WebpConfig `json:"webp_config,omitempty"`
 	// Set specific Avif ouput options.
-	AvifConfig avif.Options
+	AvifConfig avif.Options `json:"avif_config,omitempty"`
 	// Set specific JXL ouput options.
-	JxlConfig jpegxl.Options
+	JxlConfig jpegxl.Options `json:"jxl_config,omitempty"`
 }
 
 type WebpConfig struct {
 	// Quality of output pictures, a integer between 0 and 100. Optional.
-	Quality int
+	Quality int `json:"quality,omitempty"`
 	// Enable lossless quality compression if present.
-	Lossless bool
-	Exact    bool
+	Lossless bool `json:"lossless,omitempty"`
+	Exact    bool `json:"exact,omitempty"`
 }
 
 func (Pixbooster) CaddyModule() caddy.ModuleInfo {
