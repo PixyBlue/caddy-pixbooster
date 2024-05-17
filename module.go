@@ -140,12 +140,6 @@ func (p Pixbooster) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			return nil
 		}
 
-		if _, err := io.Copy(w, imgStream); err != nil {
-			p.logger.Error("Error sending image data: " + err.Error())
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return nil
-		}
-
 		file, err := os.Create(optimizedFileName)
 		if err != nil {
 			return err
